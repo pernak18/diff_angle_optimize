@@ -40,6 +40,8 @@ class fluxErr():
         flux_str -- str, netCDF variable name of fluxes to compare
         executable -- str, path to flux calculation executable to run
         template_nc -- str, path to netCDF used for executable I/O
+        test_dir -- str, path to which the results from RRTMGP runs 
+          will be written
     """
 
     self.refNC = str(inDict['reference'])
@@ -64,10 +66,12 @@ class fluxErr():
     # from self.refNC since the latter is a 3-angle calculation
     self.exeRef = inDict['template_nc']
     utils.file_check(self.exeRef)
-    base = os.path.basename(self.exeRef)
-    split = base.split('.')
+
+    self.outDir = inDict['test_dir']; utils.file_check(self.outDir)
 
     self.template = 'rrtmgp-inputs-outputs.nc'
+    split = self.template.split('.')
+    self.outNC = '%s/%s_ang%02d.nc' % (self.outDir, split[0], inAng)
   # end constructor
 
   def refExtract(self):
@@ -95,16 +99,22 @@ class fluxErr():
     test-reference errors, then plot as a function of transmittance
     """
 
-    # stage the template into a file that RRTMGP expects
-    shutil.copyfile(self.exeRef, self.template)
+    # RRTMGP code does not need to be run for every profile (the 
+    # output contains results for *all* profiles), just every angle
+    if os.path.exists(self.outNC):
+      print('%s already exists, not recomputing' % self.outNC)
+    else:
+      # stage the template into a file that RRTMGP expects
+      shutil.copyfile(self.exeRef, self.template)
 
-    # run the RRTMGP flux calculator
-    sub.call([self.exe])
+      # run the RRTMGP flux calculator
+      sub.call([self.exe])
 
-    # move the output so it won't be overwritten
-    #os.rename(self.template, self.outNC)
+      # move the output so it won't be overwritten
+      os.rename(self.template, self.outNC)
+    # endif self.outNC
 
-    with nc.Dataset(self.template, 'r') as ncObj:
+    with nc.Dataset(self.outNC, 'r') as ncObj:
       self.fluxTest = \
         np.array(ncObj.variables[self.fluxStr])\
           [:, self.iLevel, self.profNum]
@@ -202,7 +212,7 @@ class combineErr():
       plot.ylabel('F$_{1-angle}$-F$_{3-angle}$')
       plot.title('Flux Error, Profile %d' % (iProf+1) )
       plot.legend(leg, numpoints=1, loc='upper left', \
-        prop=font_prop, framealpha=0.5)
+        prop=font_prop, framealpha=0.5, ncol=3)
       plot.savefig(outPNG)
       plot.close()
       print('Wrote %s' % outPNG)
@@ -233,13 +243,16 @@ if __name__ == '__main__':
   parser.add_argument('--angle_resolution', '-res', type=int, \
     default=1, help='Angle resolution over which to loop.')
   parser.add_argument('--executable', '-e', type=str, \
-    default='test_lw_solver', \
+    default='test_lw_solver_noscat', \
     help='RRTMGP flux solver executable')
   parser.add_argument('--template_nc', '-temp', type=str, \
     default='rrtmgp-lw-inputs-outputs-clear.nc', \
     help='netCDF that is used as input into executable. The ' + \
     'code will copy it and use a naming convention that the ' + \
     'executable expects.')
+  parser.add_argument('--test_dir', '-td', type=str, \
+    default='./trial_results', \
+    help='Directory to which the results from RRTMGP runs are saved.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
