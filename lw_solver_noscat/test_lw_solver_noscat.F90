@@ -72,7 +72,6 @@ program test_lw_solver
   ! grab the propagation angle
   call get_command_argument(1, propAngS)
   read(propAngS, '(f2.0)') propAng
-  secant(:,:) = 1._wp/cosd(propAng)
 
   allocate(flux_up(ncol,nlay+1,ngpt), flux_dn(ncol,nlay+1,ngpt))
   allocate(secant(ncol, ngpt))
@@ -104,7 +103,7 @@ program test_lw_solver
   nBlocks = ncol/blockSize ! Integer division
 
   call lw_solver_noscat(ncol, nlay, ngpt, top_at_1L, &
-    secant, 1._wp,  atmos_full%tau, sources_full%lay_source, &
+    secant, 0.5_wp,  atmos_full%tau, sources_full%lay_source, &
     sources_full%lev_source_inc, sources_full%lev_source_dec, &
     sfc_emis_gpt, sources_full%sfc_source, flux_up, flux_dn)
 
