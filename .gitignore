@@ -2,3 +2,4 @@ README
 *.nc
 test_lw_solver
 figures
+test_lw_solver_noscat
