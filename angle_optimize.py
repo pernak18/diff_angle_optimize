@@ -35,6 +35,8 @@ class fluxErr():
     Input
       inAng -- int, angle at which RT calculation is done
       profNum -- int, profile number
+      relative_err -- boolean, plot relative instead of absolute 
+        flux differences
       inDict -- dictionary with the following keys:
         reference -- str, netCDF with 3-angle reference fluxes
         flux_str -- str, netCDF variable name of fluxes to compare
@@ -48,9 +50,10 @@ class fluxErr():
     utils.file_check(self.refNC)
 
     self.angle = float(inAng)
-    self.profNum = int(profNum)+1
+    self.profNum = int(profNum)
     self.fluxStr = str(inDict['flux_str'])
     self.iLevel = int(inDict['level_index'])
+    self.relErr = bool(inDict['relative_err'])
 
     ncVars = nc.Dataset(self.refNC, 'r').variables
     if self.fluxStr not in ncVars:
@@ -87,7 +90,7 @@ class fluxErr():
 
       # calculate the transmitance
       od = np.array(ncObj.variables['tau'])\
-        [:, self.iLevel, self.profNum]
+        [:, :, self.profNum].sum(axis=1)
       self.transmittance = np.exp(-od)
     # endwith
 
@@ -108,7 +111,7 @@ class fluxErr():
       shutil.copyfile(self.exeRef, self.template)
 
       # run the RRTMGP flux calculator
-      sub.call([self.exe])
+      sub.call([self.exe, str(self.angle)])
 
       # move the output so it won't be overwritten
       os.rename(self.template, self.outNC)
@@ -121,11 +124,13 @@ class fluxErr():
     # endwith
 
     self.fluxErr = self.fluxTest-self.fluxRef
+    if self.relErr: self.fluxErr /= self.fluxRef
+
   # end runRRTMGP()
 # end fluxErr
 
 class combineErr():
-  def __init__(self, fluxErrList):
+  def __init__(self, fluxErrList, relativeErr=False):
     """
     Consolidates flux errors calculated for multiple fluxErr objects,
     saves them into a netCDF, and optionally generates plots of 
@@ -136,9 +141,14 @@ class combineErr():
         nProfile-element list of nAngle-element lists of objects, 
         each of which should have transmittances and errors for every
         g-point
+
+    Keywords
+      relativeErr -- boolean, plot relative differences rather than 
+        absolute flux differences
     """
 
     self.allObj = list(fluxErrList)
+    self.relErr = bool(relativeErr)
 
     # we're assuming all profiles were run over the same amount of 
     # angles and g-points
@@ -165,6 +175,8 @@ class combineErr():
       for iAng, angObj in enumerate(profObj):
         angles.append(angObj.angle)
         profs.append(angObj.profNum)
+
+        # transmittance is the same for every angle run
         tran[iProf, :] = angObj.transmittance
         err[iProf, iAng, :] = angObj.fluxErr
       # end loop over fluxErr objects
@@ -172,10 +184,7 @@ class combineErr():
     self.angles = np.unique(angles)
     self.profs = np.unique(profs)
     self.err = np.array(err)
-
-    # transmittance is the same for every angle run
-    # convert it from an array to a vector
-    self.transmittance = np.reshape(np.array(tran), (tran.size))
+    self.transmittance = np.array(tran)
 
     # these two conditionals really should never fail
     if self.angles.size != self.nAngles:
@@ -196,23 +205,28 @@ class combineErr():
     Make a separate figure for each profile.
     """
 
-    # plotting parameters
-    leg = ['%d' % ang + r'$^{\circ}$' for ang in self.angles]
-
-    tran = np.array(self.transmittance)
+    # plotting legend strings
+    leg = []
     for iProf, errProf in enumerate(self.err):
+      tran = np.array(self.transmittance[iProf, :])
       outPNG = '%s_%03d.png' % (self.pngPrefix, iProf+1)
-      for errAng in errProf:
+      for iErr, errAng in enumerate(errProf):
+        # only plot every third angle
+        if iErr % 3 != 0: continue
+        leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
         iSort = np.argsort(tran)
         plot.plot(tran[iSort], errAng[iSort], '-')
       # end angle loop
 
       # aesthetics
+      yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
+        self.relErr else '$F_{1-angle}$-F_{3-angle}$'
       plot.xlabel('Transmittance, Level %d' % self.iLevel)
-      plot.ylabel('F$_{1-angle}$-F$_{3-angle}$')
+      plot.ylabel(yLab)
       plot.title('Flux Error, Profile %d' % (iProf+1) )
       plot.legend(leg, numpoints=1, loc='upper left', \
-        prop=font_prop, framealpha=0.5, ncol=3)
+        prop=font_prop, framealpha=0.5)
+      plot.gca().axhline(0, linestyle='--', color='k')
       plot.savefig(outPNG)
       plot.close()
       print('Wrote %s' % outPNG)
@@ -253,6 +267,8 @@ if __name__ == '__main__':
   parser.add_argument('--test_dir', '-td', type=str, \
     default='./trial_results', \
     help='Directory to which the results from RRTMGP runs are saved.')
+  parser.add_argument('--relative_err', '-r', action='store_true', \
+    help='Plot relative rather than absolete flux errors')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -275,7 +291,7 @@ if __name__ == '__main__':
     fErrAll.append(fErrAng)
   # end profile loop
 
-  combObj = combineErr(fErrAll)
+  combObj = combineErr(fErrAll, relativeErr=args.relative_err)
   combObj.makeArrays()
   combObj.plotErrT()
 # end main()
