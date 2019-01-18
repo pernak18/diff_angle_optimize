@@ -159,6 +159,10 @@ class combineErr():
     self.iLayer = fluxErrList[0][0].iLayer
 
     self.pngPrefix = str(prefix)
+
+    self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
+      self.relErr else '$F_{1-angle}-F_{3-angle}$'
+    self.xLab = 'Transmittance'
   # end constructor
 
   def makeArrays(self):
@@ -222,7 +226,7 @@ class combineErr():
     # plotting legend strings
     leg = []
     tran = np.array(self.transmittance)
-    outPNG = '%s.png' % self.pngPrefix
+    outPNG = '%s_flux_errors_transmittance.png' % self.pngPrefix
     for iErr, errAng in enumerate(self.err):
       # only plot every third angle
       if iErr % 3 != 0: continue
@@ -232,10 +236,8 @@ class combineErr():
     # end angle loop
 
     # aesthetics
-    yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
-      self.relErr else '$F_{1-angle}-F_{3-angle}$'
-    plot.xlabel('Transmittance, Layer %d' % (self.iLayer+1))
-    plot.ylabel(yLab)
+    plot.xlabel(self.xLab)
+    plot.ylabel(self.yLab)
     plot.title('Flux Error')
     plot.legend(leg, numpoints=1, loc='upper left', \
       prop=font_prop, framealpha=0.5)
@@ -246,6 +248,26 @@ class combineErr():
 
     # end profile loop
   # end plotErrT()
+
+  def plotThetaOptT(self):
+    """
+    Plot optimized diffusivity angle (i.e., angle the minimizes error 
+    error between 1- and 3-angle flux calculations) as a function of
+    transmittance
+    """
+
+    outPNG = '%s_opt_angle_transmittance.png' % self.pngPrefix
+    iErrMin = np.argmin(np.abs(self.err), axis=0)
+    iSort = np.argsort(self.transmittance)
+    plot.plot(self.transmittance[iSort], self.angles[iErrMin][iSort], 'o')
+    plot.xlabel(self.xLab)
+    plot.ylabel(r'$\theta_{optimized}$')
+    plot.title('Diffusivity Angle Optimization')
+    plot.savefig(outPNG)
+    plot.close()
+
+    print('Wrote %s' % outPNG)
+  # end plotThetaOptT()
 # end combineErr
 
 if __name__ == '__main__':
@@ -325,6 +347,7 @@ if __name__ == '__main__':
   combObj = combineErr(fErrAll, relativeErr=args.relative_err, \
     prefix=args.prefix)
   combObj.makeArrays()
-  combObj.plotErrT()
+  #combObj.plotErrT()
+  combObj.plotThetaOptT()
 # end main()
 
