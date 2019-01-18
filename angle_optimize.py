@@ -2,7 +2,7 @@
 
 from __future__ import print_function
 
-import os, sys
+import os, sys, pickle
 import numpy as np
 import matplotlib.pyplot as plot
 import matplotlib.font_manager as font
@@ -52,7 +52,7 @@ class fluxErr():
     self.angle = float(inAng)
     self.profNum = int(profNum)
     self.fluxStr = str(inDict['flux_str'])
-    self.iLevel = int(inDict['level_index'])
+    self.iLayer = int(inDict['layer_index'])
     self.relErr = bool(inDict['relative_err'])
 
     ncVars = nc.Dataset(self.refNC, 'r').variables
@@ -83,10 +83,10 @@ class fluxErr():
     """
 
     with nc.Dataset(self.refNC, 'r') as ncObj:
-      # grab specified flux at specified level
+      # grab specified flux at specified layer
       self.fluxRef = \
         np.array(ncObj.variables[self.fluxStr])\
-        [:, self.iLevel, self.profNum]
+        [:, self.iLayer, self.profNum]
 
       # calculate the transmitance
       od = np.array(ncObj.variables['tau'])\
@@ -120,7 +120,7 @@ class fluxErr():
     with nc.Dataset(self.outNC, 'r') as ncObj:
       self.fluxTest = \
         np.array(ncObj.variables[self.fluxStr])\
-          [:, self.iLevel, self.profNum]
+          [:, self.iLayer, self.profNum]
     # endwith
 
     self.fluxErr = self.fluxTest-self.fluxRef
@@ -130,7 +130,8 @@ class fluxErr():
 # end fluxErr
 
 class combineErr():
-  def __init__(self, fluxErrList, relativeErr=False):
+  def __init__(self, fluxErrList, relativeErr=False, \
+    prefix='flux_errors_Garand'):
     """
     Consolidates flux errors calculated for multiple fluxErr objects,
     saves them into a netCDF, and optionally generates plots of 
@@ -155,24 +156,29 @@ class combineErr():
     self.nAngles = len(fluxErrList[0])
     self.nG = fluxErrList[0][0].fluxErr.size
     self.nProfiles = len(fluxErrList)
-    self.iLevel = fluxErrList[0][0].iLevel
+    self.iLayer = fluxErrList[0][0].iLayer
 
-    self.pngPrefix = 'flux_errors_Garand'
+    self.pngPrefix = str(prefix)
   # end constructor
 
   def makeArrays(self):
     """
-    Generate nProfile x nAngle x nG arrays of transmittances and 
-    flux error
+    Generate and transformt arrays of transmittances and flux error
+    for plotting
     """
 
+    # we wanna loop over all profiles and append their "spectra" 
+    # onto each other so we can combine all profiles' err vs. t onto 
+    # same plot
+
     # initialize lists and arrays
-    angles, profs, = [], []
+    angles, profs, err, tran = [], [], [], []
     err = np.zeros((self.nProfiles, self.nAngles, self.nG))
     tran = np.zeros((self.nProfiles, self.nG))
 
     for iProf, profObj in enumerate(self.allObj):
       for iAng, angObj in enumerate(profObj):
+        # these two lists will end up having nAng and nProf dim
         angles.append(angObj.angle)
         profs.append(angObj.profNum)
 
@@ -183,8 +189,9 @@ class combineErr():
 
     self.angles = np.unique(angles)
     self.profs = np.unique(profs)
-    self.err = np.array(err)
-    self.transmittance = np.array(tran)
+
+    # combine transmittances from all profiles together
+    self.transmittance = np.array(tran).flatten()
 
     # these two conditionals really should never fail
     if self.angles.size != self.nAngles:
@@ -196,6 +203,13 @@ class combineErr():
       print('Cannot continue, profiles are not consistent')
       sys.exit(1)
     # endif profiles
+
+    # want a [nAng x (nProf * nG)] 2-D array of errors where we 
+    # combine all of the errors from profiles
+    temp = np.transpose(np.array(err), axes=(1, 0, 2))
+    self.err = temp.reshape(\
+      (self.nAngles, self.nG * self.nProfiles))
+
   # end makeArrays()
 
   def plotErrT(self):
@@ -207,29 +221,28 @@ class combineErr():
 
     # plotting legend strings
     leg = []
-    for iProf, errProf in enumerate(self.err):
-      tran = np.array(self.transmittance[iProf, :])
-      outPNG = '%s_%03d.png' % (self.pngPrefix, iProf+1)
-      for iErr, errAng in enumerate(errProf):
-        # only plot every third angle
-        if iErr % 3 != 0: continue
-        leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
-        iSort = np.argsort(tran)
-        plot.plot(tran[iSort], errAng[iSort], '-')
-      # end angle loop
+    tran = np.array(self.transmittance)
+    outPNG = '%s.png' % self.pngPrefix
+    for iErr, errAng in enumerate(self.err):
+      # only plot every third angle
+      if iErr % 3 != 0: continue
+      leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
+      iSort = np.argsort(tran)
+      plot.plot(tran[iSort], errAng[iSort], '-')
+    # end angle loop
 
-      # aesthetics
-      yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
-        self.relErr else '$F_{1-angle}$-F_{3-angle}$'
-      plot.xlabel('Transmittance, Level %d' % self.iLevel)
-      plot.ylabel(yLab)
-      plot.title('Flux Error, Profile %d' % (iProf+1) )
-      plot.legend(leg, numpoints=1, loc='upper left', \
-        prop=font_prop, framealpha=0.5)
-      plot.gca().axhline(0, linestyle='--', color='k')
-      plot.savefig(outPNG)
-      plot.close()
-      print('Wrote %s' % outPNG)
+    # aesthetics
+    yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
+      self.relErr else '$F_{1-angle}-F_{3-angle}$'
+    plot.xlabel('Transmittance, Layer %d' % (self.iLayer+1))
+    plot.ylabel(yLab)
+    plot.title('Flux Error')
+    plot.legend(leg, numpoints=1, loc='upper left', \
+      prop=font_prop, framealpha=0.5)
+    plot.gca().axhline(0, linestyle='--', color='k')
+    plot.savefig(outPNG)
+    plot.close()
+    print('Wrote %s' % outPNG)
 
     # end profile loop
   # end plotErrT()
@@ -247,8 +260,8 @@ if __name__ == '__main__':
   parser.add_argument('--flux_str', '-fs', type=str, \
     default='gpt_flux_dn', \
     help='String of netCDF flux variable to extract.')
-  parser.add_argument('--level_index', '-l', type=int, default=0, \
-    help='Zero-offset index of level to use in comparison.')
+  parser.add_argument('--layer_index', '-l', type=int, default=0, \
+    help='Zero-offset index of layer to use in comparison.')
   parser.add_argument('--profiles', '-p', type=int, default=42, \
     help='Number of profiles over which to loop.')
   parser.add_argument('--angle_range', '-a', type=float, \
@@ -269,29 +282,48 @@ if __name__ == '__main__':
     help='Directory to which the results from RRTMGP runs are saved.')
   parser.add_argument('--relative_err', '-r', action='store_true', \
     help='Plot relative rather than absolete flux errors')
+  parser.add_argument('--save_file', '-s', type=str, \
+    default='Garand_optimize_diffusivity_angle.p', \
+    help='Name of pickle file that contains list of ' + \
+    'fluxErr objects. This can be used to save time if the ' + \
+    'analysis has already been done and one just needs to ' + \
+    'proceed to plotting. If the file exists, the code will ' + \
+    'skip to plotting. If it does not, the list of objects will ' + \
+    'be saved to it.')
+  parser.add_argument('--prefix', '-pre', type=str, \
+    default='flux_errors_Garand', help='Prefix for output PNG File')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
+  pFile = args.save_file
 
-  # loop over all angles (inclusive), generating a fluxErr object 
-  # for each angle and profile, which we'll combine using another 
-  # class; fErrAll contains objects for all profiles and angles
-  fErrAll = []
-  for iProf in range(args.profiles):
-    # fErrAng contains objects for all angles for a given profile
-    fErrAng = []
-    for ang in np.arange(angles[0], angles[1]+res, res):
-      print('Running Profile %d, %d degrees' % (iProf+1, ang))
-      fErr = fluxErr(ang, iProf, vars(args))
-      fErr.refExtract()
-      fErr.runRRTMGP()
-      fErrAng.append(fErr)
-    # end angle loop
+  if os.path.exists(pFile):
+    fErrAll = pickle.load(open(pFile, 'rb'))
+  else:
+    # loop over all angles (inclusive), generating a fluxErr object 
+    # for each angle and profile, which we'll combine using another 
+    # class; fErrAll contains objects for all profiles and angles
+    fErrAll = []
+    for iProf in range(args.profiles):
+      # fErrAng contains objects for all angles for a given profile
+      fErrAng = []
+      for ang in np.arange(angles[0], angles[1]+res, res):
+        print('Running Profile %d, %d degrees' % (iProf+1, ang))
+        fErr = fluxErr(ang, iProf, vars(args))
+        fErr.refExtract()
+        fErr.runRRTMGP()
+        fErrAng.append(fErr)
+      # end angle loop
 
-    fErrAll.append(fErrAng)
-  # end profile loop
+      fErrAll.append(fErrAng)
 
-  combObj = combineErr(fErrAll, relativeErr=args.relative_err)
+      # save the output for later plotting
+      pickle.dump(fErrAll, open(pFile, 'wb'))
+    # end profile loop
+  # endif npzFile
+
+  combObj = combineErr(fErrAll, relativeErr=args.relative_err, \
+    prefix=args.prefix)
   combObj.makeArrays()
   combObj.plotErrT()
 # end main()
