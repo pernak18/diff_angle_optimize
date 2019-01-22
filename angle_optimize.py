@@ -130,8 +130,7 @@ class fluxErr():
 # end fluxErr
 
 class combineErr():
-  def __init__(self, fluxErrList, relativeErr=False, \
-    prefix='flux_errors_Garand'):
+  def __init__(self, fluxErrList, inDict):
     """
     Consolidates flux errors calculated for multiple fluxErr objects,
     saves them into a netCDF, and optionally generates plots of 
@@ -144,12 +143,26 @@ class combineErr():
         g-point
 
     Keywords
-      relativeErr -- boolean, plot relative differences rather than 
-        absolute flux differences
+      inDict -- dictionary with the following keys:
+        angle_range -- 3-element float list of starting and ending 
+          angles and sampling rate for plot. By default, we span 45 
+          to 65 degrees and plot every third angle.
+        prefix -- string, prefix for output PNG file
+        relative_err -- boolean, plot relative differences rather 
+          than absolute flux differences
+        smooth -- boolean, plot smooth curves
+        binning -- float, transmittance binning for smoothing
+        prob_dist -- boolean, plot probability distribution
     """
 
     self.allObj = list(fluxErrList)
-    self.relErr = bool(relativeErr)
+    self.relErr = bool(inDict['relative_err'])
+    self.smooth = bool(inDict['smooth'])
+    self.binning = inDict['binning']
+    self.probDist = inDict['prob_dist']
+    self.samplingAng = inDict['angle_range'][2]
+    self.pngPrefix = str(inDict['prefix'])
+    if args.smooth: self.pngPrefix += '_smooth'
 
     # we're assuming all profiles were run over the same amount of 
     # angles and g-points
@@ -158,11 +171,15 @@ class combineErr():
     self.nProfiles = len(fluxErrList)
     self.iLayer = fluxErrList[0][0].iLayer
 
-    self.pngPrefix = str(prefix)
-
     self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
       self.relErr else '$F_{1-angle}-F_{3-angle}$'
     self.xLab = 'Transmittance'
+
+    if self.smooth:
+      self.yLab = \
+        r'($\overline{\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}}$)'
+      self.xLab += ' (Binning = %.2f)' % self.binning
+    # end smooth labels
   # end constructor
 
   def makeArrays(self):
@@ -190,6 +207,7 @@ class combineErr():
         tran[iProf, :] = angObj.transmittance
         err[iProf, iAng, :] = angObj.fluxErr
       # end loop over fluxErr objects
+    # end profile loop
 
     self.angles = np.unique(angles)
     self.profs = np.unique(profs)
@@ -214,6 +232,38 @@ class combineErr():
     self.err = temp.reshape(\
       (self.nAngles, self.nG * self.nProfiles))
 
+    if self.smooth:
+      tran = np.arange(0, 1+self.binning, self.binning)
+      sErr = []
+
+      for it, t2 in enumerate(tran):
+        if it == 0:
+          sErr.append(np.repeat(np.nan, self.nAngles))
+          continue
+        # endif 0
+
+        t1 = tran[it-1]
+        itBin = np.where((self.transmittance >= t1) & \
+          (self.transmittance < t2 ))[0]
+
+        # fill values for all angles if no t exist in bin
+        if itBin.size == 0:
+          sErr.append(np.repeat(np.nan, self.nAngles))
+          continue
+        # endif 0
+
+        sErrAng = []
+        for iAng, ang in enumerate(self.angles):
+          smoothErr = self.err[iAng, itBin].mean()
+          sErrAng.append(smoothErr)
+        # end angle loop
+
+        sErr.append(sErrAng)
+      # end t bin loop
+
+      self.transmittance = np.array(tran)
+      self.err = np.array(sErr).T
+    # end smoothing
   # end makeArrays()
 
   def plotErrT(self):
@@ -228,8 +278,8 @@ class combineErr():
     tran = np.array(self.transmittance)
     outPNG = '%s_flux_errors_transmittance.png' % self.pngPrefix
     for iErr, errAng in enumerate(self.err):
-      # only plot every third angle
-      if iErr % 3 != 0: continue
+      # don't plot curves for all angles
+      if iErr % self.samplingAng != 0: continue
       leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
       iSort = np.argsort(tran)
       plot.plot(tran[iSort], errAng[iSort], '-')
@@ -287,8 +337,11 @@ if __name__ == '__main__':
   parser.add_argument('--profiles', '-p', type=int, default=42, \
     help='Number of profiles over which to loop.')
   parser.add_argument('--angle_range', '-a', type=float, \
-    default=[45, 65], nargs=2, \
-    help='Starting and ending angles over which to loop')
+    default=[45, 65, 3], nargs=3, \
+    help='Starting and ending angles over which to loop and ' + \
+    'the sampling rate for the plot. By default, we span 45 to ' + \
+    '65 degrees at the specified angular resolution and plot ' + \
+    'every third angle.')
   parser.add_argument('--angle_resolution', '-res', type=int, \
     default=1, help='Angle resolution over which to loop.')
   parser.add_argument('--executable', '-e', type=str, \
@@ -314,6 +367,12 @@ if __name__ == '__main__':
     'be saved to it.')
   parser.add_argument('--prefix', '-pre', type=str, \
     default='flux_errors_Garand', help='Prefix for output PNG File')
+  parser.add_argument('--smooth', '-sm', action='store_true', \
+    help='Smooth the curves using t binning and averaging.')
+  parser.add_argument('--binning', '-b', type=float, default=0.01, \
+    help='Binning to use in smoothing of the curves.')
+  parser.add_argument('--prob_dist', '-pd', action='store_true', \
+    help='Plot probability distribution.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -344,10 +403,9 @@ if __name__ == '__main__':
     # end profile loop
   # endif npzFile
 
-  combObj = combineErr(fErrAll, relativeErr=args.relative_err, \
-    prefix=args.prefix)
+  combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
-  #combObj.plotErrT()
+  combObj.plotErrT()
   combObj.plotThetaOptT()
 # end main()
 
