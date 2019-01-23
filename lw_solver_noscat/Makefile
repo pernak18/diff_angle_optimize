@@ -24,15 +24,15 @@ ADDITIONS = mo_simple_netcdf.o mo_test_files_io.o mo_fluxes_bygpoint.o
 # Targets
 #
 
-all: test_lw_solver_noscat_1ang test_lw_solver_noscat_opt_angs
+all: lw_solver_1ang lw_solver_opt_angs
 
-test_lw_solver_noscat_1ang: $(ADDITIONS) test_lw_solver_noscat_1ang.o
+lw_solver_1ang: $(ADDITIONS) lw_solver_1ang.o
 
-test_lw_solver_noscat_1ang.o: $(ADDITIONS) test_lw_solver_noscat_1ang.F90
+lw_solver_1ang.o: $(ADDITIONS) lw_solver_1ang.F90
 
-test_lw_solver_noscat_opt_angs: $(ADDITIONS) test_lw_solver_noscat_opt_angs.o
+lw_solver_opt_angs: $(ADDITIONS) lw_solver_opt_angs.o
 
-test_lw_solver_noscat_opt_angs.o: $(ADDITIONS) test_lw_solver_noscat_opt_angs.F90
+lw_solver_opt_angs.o: $(ADDITIONS) lw_solver_opt_angs.F90
 
 mo_test_files_io.o: mo_simple_netcdf.o mo_test_files_io.F90
 
