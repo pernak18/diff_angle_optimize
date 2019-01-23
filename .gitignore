@@ -2,7 +2,8 @@ README
 *.nc
 test_lw_solver
 figures
-test_lw_solver_noscat
+test_lw_solver_noscat_1ang
+test_lw_solver_noscat_opt_angs
 trial_results
 save_files
 *.png
