@@ -9,6 +9,7 @@ import matplotlib.font_manager as font
 import netCDF4 as nc
 import subprocess as sub
 import shutil
+from scipy import interpolate as INTER
 
 # Gitlab submodule
 sys.path.append('common')
@@ -153,6 +154,8 @@ class combineErr():
         smooth -- boolean, plot smooth curves
         binning -- float, transmittance binning for smoothing
         prob_dist -- boolean, plot probability distribution
+        plot_fit -- boolean, plot fits to the flux errors as a 
+          function of t rather than raw flux errors
     """
 
     self.allObj = list(fluxErrList)
@@ -162,6 +165,7 @@ class combineErr():
     self.probDist = inDict['prob_dist']
     self.samplingAng = inDict['angle_range'][2]
     self.pngPrefix = str(inDict['prefix'])
+    self.plotFit = bool(inDict['plot_fit'])
     if args.smooth: self.pngPrefix += '_smooth'
 
     # we're assuming all profiles were run over the same amount of 
@@ -269,20 +273,20 @@ class combineErr():
   def plotErrT(self):
     """
     Plot flux error as a function of transmittance for every angle.
-
-    Make a separate figure for each profile.
     """
 
-    # plotting legend strings
-    leg = []
-    tran = np.array(self.transmittance)
     outPNG = '%s_flux_errors_transmittance.png' % self.pngPrefix
+    leg, fits, roots, newAng = [], [], [], []
+    tran = np.array(self.transmittance)
     for iErr, errAng in enumerate(self.err):
       # don't plot curves for all angles
       if iErr % self.samplingAng != 0: continue
-      leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
+
       iSort = np.argsort(tran)
       plot.plot(tran[iSort], errAng[iSort], '-')
+
+      # legend string -- ?? degrees
+      leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
     # end angle loop
 
     # aesthetics
@@ -295,8 +299,6 @@ class combineErr():
     plot.savefig(outPNG)
     plot.close()
     print('Wrote %s' % outPNG)
-
-    # end profile loop
   # end plotErrT()
 
   def plotThetaOptT(self):
@@ -318,6 +320,51 @@ class combineErr():
 
     print('Wrote %s' % outPNG)
   # end plotThetaOptT()
+
+  def fitErrT(self):
+    """
+    Fit a cubic spline to the curve for each angle for better 
+    determination of the root
+    """
+
+    leg, fits, roots, newAng = [], [], [], []
+    tran = np.array(self.transmittance)
+    for iErr, errAng in enumerate(self.err):
+      # don't plot curves for all angles
+      if iErr % self.samplingAng != 0: continue
+
+      iSort = np.argsort(tran)
+
+      # fit a cubic spline to the curve for this angle
+      fit = INTER.UnivariateSpline(tran[iSort], errAng[iSort])
+      fitDat = fit(tran[iSort])
+
+      # some a posteriori hand waving here...
+      angRoots = fit.roots()
+      if len(angRoots) == 0: continue
+      root = angRoots[-1] if len(angRoots) > 1 else angRoots[0]
+      fits.append(fitDat)
+      roots.append(root)
+      newAng.append(self.angles[iErr])
+
+      # legend string -- ?? degrees
+      leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
+    # end angle loop
+
+    self.fits = np.array(fits)
+    self.roots = np.array(roots)
+    self.angles = np.array(newAng)
+    self.secant = 1/np.cos(np.radians(self.angles))
+  # end fitErrT()
+
+  def playground(self):
+    
+    newFit = INTER.UnivariateSpline(self.roots, self.secant)
+    plot.plot(self.roots, self.secant, 'bo', \
+      self.roots, newFit(self.roots), 'r')
+    plot.show()
+    print(newFit.get_coeffs())
+  # end 
 # end combineErr
 
 if __name__ == '__main__':
@@ -373,6 +420,9 @@ if __name__ == '__main__':
     help='Binning to use in smoothing of the curves.')
   parser.add_argument('--prob_dist', '-pd', action='store_true', \
     help='Plot probability distribution.')
+  parser.add_argument('--plot_fit', '-fit', action='store_true', \
+    help='Plot the cubic spline fit to the errors instead of ' + \
+    'raw errors.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -405,7 +455,13 @@ if __name__ == '__main__':
 
   combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
-  combObj.plotErrT()
-  combObj.plotThetaOptT()
+  if args.plot_fit:
+    combObj.fitErrT()
+    combObj.playground()
+  else:
+    combObj.plotErrT()
+    combObj.plotThetaOptT()
+  # endif plot_fit
+
 # end main()
 

@@ -5,3 +5,4 @@ figures
 test_lw_solver_noscat
 trial_results
 save_files
+*.png
