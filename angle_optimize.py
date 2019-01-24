@@ -197,7 +197,7 @@ class combineErr():
     # same plot
 
     # initialize lists and arrays
-    angles, profs, err, tran = [], [], [], []
+    angles, profs, sigmas = [], [], []
     err = np.zeros((self.nProfiles, self.nAngles, self.nG))
     tran = np.zeros((self.nProfiles, self.nG))
 
@@ -210,6 +210,7 @@ class combineErr():
         # transmittance is the same for every angle run
         tran[iProf, :] = angObj.transmittance
         err[iProf, iAng, :] = angObj.fluxErr
+
       # end loop over fluxErr objects
     # end profile loop
 
@@ -235,6 +236,7 @@ class combineErr():
     temp = np.transpose(np.array(err), axes=(1, 0, 2))
     self.err = temp.reshape(\
       (self.nAngles, self.nG * self.nProfiles))
+    self.errSpread = self.err.std(ddof=1, axis=1)
 
     if self.smooth:
       tran = np.arange(0, 1+self.binning, self.binning)
@@ -351,21 +353,98 @@ class combineErr():
       leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
     # end angle loop
 
-    self.fits = np.array(fits)
-    self.roots = np.array(roots)
+    self.fitsErrTran = np.array(fits)
+    self.rootsErrTran = np.array(roots)
     self.angles = np.array(newAng)
-    self.secant = 1/np.cos(np.radians(self.angles))
+    self.secants = 1/np.cos(np.radians(self.angles))
+
   # end fitErrT()
 
-  def playground(self):
-    
-    newFit = INTER.UnivariateSpline(self.roots, self.secant)
-    plot.plot(self.roots, self.secant, 'bo', \
-      self.roots, newFit(self.roots), 'r')
-    plot.show()
-    print(newFit.get_coeffs())
-  # end 
+  def fitAngT(self):
+    """
+    Using the roots determined in fitErrT, now generate a function of
+    optimal angle dependent on transmission (i.e., roots)
+    """
+
+    coeffs = np.polyfit(self.rootsErrTran, self.secants, 3)
+    self.secTFit = np.poly1d(coeffs)
+  # end fitAngT()
 # end combineErr
+
+class secantRecalc():
+  def __init__(self, inFluxErr, inCombineErr, \
+    outFile='optimized_secants.nc'):
+    """
+    Combine attributes from fluxErr and combineErr objects to 
+    generate a netCDF with modeled optimized secants
+
+    Input
+      inFluxErr -- list of fluxErr objects; should be one object per 
+        profile per experimental angle (with nGpt elements)
+      inCombineErr -- combineErr object generated from inFluxErrr
+
+    Keywords
+      outFile -- string, name of output netCDF that this class 
+        produces
+    """
+
+    self.secModel = inCombineErr.secTFit
+
+    # transmittances differ by profile and g-point
+    # the nProf x nGpt arrays are the same for each profile
+    tranArr = []
+    for prof in inFluxErr: tranArr.append(prof[0].transmittance)
+
+    self.transmittance = np.array(tranArr)
+    self.modSecant = self.secModel(self.transmittance)
+
+    secDims = self.modSecant.shape
+    self.nProfile = secDims[0]
+    self.nGpt = secDims[1]
+    self.outNC = str(outFile)
+  # constructor
+
+  def writeNC(self):
+    """
+    Write a netCDF that only contains a "secant" array. This file 
+    will be read in by test_lw_solver_noscat (or whatever the 
+    executable into main() is).
+
+    NOTE FOR LATER: this guy should probably inherit fluxErr 
+    properties, specifically the runRRTMGP() method
+    """
+
+    with nc.Dataset(self.outNC, 'w') as ncObj:
+      ncObj.description = 'Secant values for every g-point of ' + \
+        'every (Garand) profile to fluxErr class in ' + \
+        'angle_optimize.py for which errors between a 1-angle ' + \
+        'test RRTGMP run and a 3-angle reference RRTMGP run were ' + \
+        'calcualated. These are the angles at which the errors ' + \
+        'were minimized.'
+      ncObj.createDimension('profiles', self.nProfile)
+      ncObj.createDimension('gpt', self.nGpt)
+      secant = ncObj.createVariable(\
+        'secant', float, ('gpt', 'profiles'))
+      secant.units = 'None'
+      secant.description = 'Optimized secants for flux calculations'
+      secant[:] = np.array(self.modSecant)
+    # endwith
+  # end writeNC()
+
+  def playground(self):
+    rObj = nc.Dataset('rrtmgp-inputs-outputs.nc', 'r')
+    tObj = nc.Dataset('rrtmgp-lw-inputs-outputs-clear-ang-3.nc', 'r')
+
+    testFlux = np.array(rObj.variables['gpt_flux_dn'])[:,0,:]
+    refFlux = np.array(tObj.variables['gpt_flux_dn'])[:,0,:]
+    diff = testFlux-refFlux
+    print(diff.std(ddof=1))
+    print(diff.flatten().std(ddof=1))
+
+    rObj.close()
+    tObj.close()
+  # end playground
+# end secantRecalc
 
 if __name__ == '__main__':
   import argparse
@@ -392,8 +471,9 @@ if __name__ == '__main__':
   parser.add_argument('--angle_resolution', '-res', type=int, \
     default=1, help='Angle resolution over which to loop.')
   parser.add_argument('--executable', '-e', type=str, \
-    default='test_lw_solver_noscat', \
-    help='RRTMGP flux solver executable')
+    default='test_lw_solver_noscat_opt_angs', \
+    help='RRTMGP flux solver executable for fluxErr and ' + \
+    'secantRecalc classes, respectively.')
   parser.add_argument('--template_nc', '-temp', type=str, \
     default='rrtmgp-lw-inputs-outputs-clear.nc', \
     help='netCDF that is used as input into executable. The ' + \
@@ -428,6 +508,7 @@ if __name__ == '__main__':
   angles, res = args.angle_range, args.angle_resolution
   pFile = args.save_file
 
+  # first make an nProf x nAngle x nGpoint array of flux differences
   if os.path.exists(pFile):
     fErrAll = pickle.load(open(pFile, 'rb'))
   else:
@@ -453,14 +534,24 @@ if __name__ == '__main__':
     # end profile loop
   # endif npzFile
 
+  # combine the flux error arrays for plotting and fitting
   combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
+  
   if args.plot_fit:
     combObj.fitErrT()
-    combObj.playground()
+    combObj.fitAngT()
+    combObj.plotErrT()
+
+    # use the fit of angle vs. transmittance to model optimal angle 
+    # for all g-points and profiles
+    reSecObj = secantRecalc(fErrAll, combObj)
+    reSecObj.writeNC()
+    reSecObj.playground()
   else:
     combObj.plotErrT()
-    combObj.plotThetaOptT()
+    # probably should never be used anymore...
+    #combObj.plotThetaOptT()
   # endif plot_fit
 
 # end main()

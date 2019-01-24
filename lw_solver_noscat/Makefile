@@ -24,7 +24,7 @@ ADDITIONS = mo_simple_netcdf.o mo_test_files_io.o mo_fluxes_bygpoint.o
 # Targets
 #
 
-all: lw_solver_1ang lw_solver_opt_angs
+all: lw_solver_opt_angs
 
 lw_solver_1ang: $(ADDITIONS) lw_solver_1ang.o
 

@@ -4,7 +4,7 @@ subroutine stop_on_err(msg)
   character(len=*), intent(in) :: msg
   if(len_trim(msg) > 0) then
     write (error_unit,*) trim(msg)
-    write (error_unit,*) "test_lw_solver_noscat stopping"
+    write (error_unit,*) "lw_solver_opt_angs stopping"
     stop
   end if
 end subroutine
@@ -23,7 +23,7 @@ program lw_solver_opt_angs
     read_lw_Planck_sources, read_direction, read_lw_bc, read_lw_rt, &
     write_gpt_fluxes
 
-  use mo_simple_netcdf
+  use mo_simple_netcdf, only: read_field
   use netcdf
   implicit none
 ! ------------------------------------------------------------------
@@ -77,8 +77,8 @@ program lw_solver_opt_angs
   ! was determined with angle_optimize.py and written as a function 
   ! of (Garand) profile and g-point
   if(nf90_open(secFile, NF90_NOWRITE, ncid) /= NF90_NOERR) &
-    call stop_on_err("test_lw_solver: can't open file " // secFile)
-  secant = read_2d_field(ncid, 'secant', ncol, ngpt)
+    call stop_on_err("lw_solver_opt_angs: can't open file " // secFile)
+  secant = read_field(ncid, 'secant', ncol, ngpt)
   ncid = nf90_close(ncid)
 
   ! for lw_solver_noscat(), we need a surface emissivity array that 
