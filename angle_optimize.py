@@ -20,7 +20,7 @@ font_prop = font.FontProperties()
 font_prop.set_size(8)
 
 class fluxErr():
-  def __init__(self, inAng, profNum, inDict):
+  def __init__(self, inAng, inDict):
     """
     For a given profile and angle:
       - grab reference fluxes and optical depths (tau)
@@ -35,7 +35,6 @@ class fluxErr():
 
     Input
       inAng -- int, angle at which RT calculation is done
-      profNum -- int, profile number
       relative_err -- boolean, plot relative instead of absolute 
         flux differences
       inDict -- dictionary with the following keys:
@@ -43,6 +42,7 @@ class fluxErr():
         flux_str -- str, netCDF variable name of fluxes to compare
         executable -- str, path to flux calculation executable to run
         template_nc -- str, path to netCDF used for executable I/O
+        secant_nc -- str, path to netCDF with secant array
         test_dir -- str, path to which the results from RRTMGP runs 
           will be written
     """
@@ -51,7 +51,7 @@ class fluxErr():
     utils.file_check(self.refNC)
 
     self.angle = float(inAng)
-    self.profNum = int(profNum)
+    self.secant = np.array(1/np.cos(np.radians(self.angle)))
     self.fluxStr = str(inDict['flux_str'])
     self.iLayer = int(inDict['layer_index'])
     self.relErr = bool(inDict['relative_err'])
@@ -76,6 +76,8 @@ class fluxErr():
     self.template = 'rrtmgp-inputs-outputs.nc'
     split = self.template.split('.')
     self.outNC = '%s/%s_ang%02d.nc' % (self.outDir, split[0], inAng)
+
+    self.secNC = inDict['secant_nc']
   # end constructor
 
   def refExtract(self):
@@ -86,16 +88,40 @@ class fluxErr():
     with nc.Dataset(self.refNC, 'r') as ncObj:
       # grab specified flux at specified layer
       self.fluxRef = \
-        np.array(ncObj.variables[self.fluxStr])\
-        [:, self.iLayer, self.profNum]
+        np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
+      dims = self.fluxRef.shape
+      self.nG, self.nProf = dims
 
       # calculate the transmitance
-      od = np.array(ncObj.variables['tau'])\
-        [:, :, self.profNum].sum(axis=1)
+      od = np.array(ncObj.variables['tau']).sum(axis=1)
       self.transmittance = np.exp(-od)
     # endwith
 
   # end refExtract
+
+  def writeSecNC(self):
+    """
+    Write a netCDF that only contains a "secant" array. This file 
+    will be read in by lw_solver_opt_angs (or whatever the 
+    executable into main() is).
+    """
+
+    with nc.Dataset(self.secNC, 'w') as ncObj:
+      ncObj.description = 'Secant values for every g-point of ' + \
+        'every (Garand) profile to fluxErr class in ' + \
+        'angle_optimize.py for which errors between a 1-angle ' + \
+        'test RRTGMP run and a 3-angle reference RRTMGP run were ' + \
+        'calcualated. These are the angles at which the errors ' + \
+        'were minimized.'
+      ncObj.createDimension('profiles', self.nProf)
+      ncObj.createDimension('gpt', self.nG)
+      secant = ncObj.createVariable(\
+        'secant', float, ('gpt', 'profiles'))
+      secant.units = 'None'
+      secant.description = 'Optimized secants for flux calculations'
+      secant[:] = np.array(self.secant)
+    # endwith
+  # end writeSecNC()
 
   def runRRTMGP(self):
     """
@@ -120,8 +146,7 @@ class fluxErr():
 
     with nc.Dataset(self.outNC, 'r') as ncObj:
       self.fluxTest = \
-        np.array(ncObj.variables[self.fluxStr])\
-          [:, self.iLayer, self.profNum]
+        np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
     # endwith
 
     self.fluxErr = self.fluxTest-self.fluxRef
@@ -170,10 +195,11 @@ class combineErr():
 
     # we're assuming all profiles were run over the same amount of 
     # angles and g-points
-    self.nAngles = len(fluxErrList[0])
-    self.nG = fluxErrList[0][0].fluxErr.size
-    self.nProfiles = len(fluxErrList)
-    self.iLayer = fluxErrList[0][0].iLayer
+    self.nAngles = len(fluxErrList)
+    fErrDims = fluxErrList[0].fluxErr.shape
+    self.nProfiles = fErrDims[0]
+    self.nG = fErrDims[1]
+    self.iLayer = fluxErrList[0].iLayer
 
     self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
       self.relErr else '$F_{1-angle}-F_{3-angle}$'
@@ -201,42 +227,34 @@ class combineErr():
     err = np.zeros((self.nProfiles, self.nAngles, self.nG))
     tran = np.zeros((self.nProfiles, self.nG))
 
-    for iProf, profObj in enumerate(self.allObj):
-      for iAng, angObj in enumerate(profObj):
-        # these two lists will end up having nAng and nProf dim
-        angles.append(angObj.angle)
-        profs.append(angObj.profNum)
+    for iAng, angObj in enumerate(self.allObj):
+      # these two lists will end up having nAng and nProf dim
+      angles.append(angObj.angle)
 
-        # transmittance is the same for every angle run
-        tran[iProf, :] = angObj.transmittance
-        err[iProf, iAng, :] = angObj.fluxErr
-
-      # end loop over fluxErr objects
-    # end profile loop
+      # transmittance is the same for every angle run
+      tran = angObj.transmittance
+      err[:, iAng, :] = angObj.fluxErr
+    # end loop over fluxErr objects
 
     self.angles = np.unique(angles)
-    self.profs = np.unique(profs)
 
     # combine transmittances from all profiles together
     self.transmittance = np.array(tran).flatten()
 
-    # these two conditionals really should never fail
+    # this conditional really should never fail
     if self.angles.size != self.nAngles:
       print('Cannot continue, angles are not consistent')
       sys.exit(1)
     # endif angles
-
-    if self.profs.size != self.nProfiles:
-      print('Cannot continue, profiles are not consistent')
-      sys.exit(1)
-    # endif profiles
 
     # want a [nAng x (nProf * nG)] 2-D array of errors where we 
     # combine all of the errors from profiles
     temp = np.transpose(np.array(err), axes=(1, 0, 2))
     self.err = temp.reshape(\
       (self.nAngles, self.nG * self.nProfiles))
-    self.errSpread = self.err.std(ddof=1, axis=1)
+    self.errAvg = self.err.mean(axis=1)
+    self.errAbsAvg = np.abs(self.err).mean(axis=1)
+    self.errSpread = np.sqrt(np.mean(self.err**2, axis=1))
 
     if self.smooth:
       tran = np.arange(0, 1+self.binning, self.binning)
@@ -366,14 +384,23 @@ class combineErr():
     optimal angle dependent on transmission (i.e., roots)
     """
 
+    weights = []
+    tran = self.transmittance
+    roots = self.rootsErrTran
+    for iRoot, r2 in enumerate(roots):
+      r1 = 0 if iRoot == 0 else roots[iRoot-1]
+      inBin = np.where((tran >= r1) & (tran < r2))[0].size
+      weight = 0 if inBin == 0 else float(inBin)/tran.size
+      weights.append(weight)
+    # end root loop
+
     coeffs = np.polyfit(self.rootsErrTran, self.secants, 3)
     self.secTFit = np.poly1d(coeffs)
   # end fitAngT()
 # end combineErr
 
-class secantRecalc():
-  def __init__(self, inFluxErr, inCombineErr, \
-    outFile='optimized_secants.nc'):
+class secantRecalc(fluxErr):
+  def __init__(self, inDict, inFluxErr, inCombineErr):
     """
     Combine attributes from fluxErr and combineErr objects to 
     generate a netCDF with modeled optimized secants
@@ -388,62 +415,67 @@ class secantRecalc():
         produces
     """
 
+    # first inherit some fluxErr attributes, then replace with atts 
+    # for this class
+    fluxErr.__init__(self, 0, inDict)
+
     self.secModel = inCombineErr.secTFit
 
     # transmittances differ by profile and g-point
-    # the nProf x nGpt arrays are the same for each profile
-    tranArr = []
-    for prof in inFluxErr: tranArr.append(prof[0].transmittance)
+    # the nProf x nGpt arrays are the same for each angle, so just 
+    # grab the array for the first angle
+    self.transmittance = np.array(inFluxErr[0].transmittance)
+    self.secant = self.secModel(self.transmittance)
 
-    self.transmittance = np.array(tranArr)
-    self.modSecant = self.secModel(self.transmittance)
+    secDims = self.secant.shape
+    self.nG = secDims[0]
+    self.nProf = secDims[1]
 
-    secDims = self.modSecant.shape
-    self.nProfile = secDims[0]
-    self.nGpt = secDims[1]
-    self.outNC = str(outFile)
+    self.template = 'rrtmgp-inputs-outputs.nc'
+    split = self.template.split('.')
+    self.outNC = '%s_opt_ang.nc' % split[0]
+
+    self.pngPrefix = str(inDict['prefix'])
   # constructor
 
-  def writeNC(self):
-    """
-    Write a netCDF that only contains a "secant" array. This file 
-    will be read in by test_lw_solver_noscat (or whatever the 
-    executable into main() is).
-
-    NOTE FOR LATER: this guy should probably inherit fluxErr 
-    properties, specifically the runRRTMGP() method
-    """
-
-    with nc.Dataset(self.outNC, 'w') as ncObj:
-      ncObj.description = 'Secant values for every g-point of ' + \
-        'every (Garand) profile to fluxErr class in ' + \
-        'angle_optimize.py for which errors between a 1-angle ' + \
-        'test RRTGMP run and a 3-angle reference RRTMGP run were ' + \
-        'calcualated. These are the angles at which the errors ' + \
-        'were minimized.'
-      ncObj.createDimension('profiles', self.nProfile)
-      ncObj.createDimension('gpt', self.nGpt)
-      secant = ncObj.createVariable(\
-        'secant', float, ('gpt', 'profiles'))
-      secant.units = 'None'
-      secant.description = 'Optimized secants for flux calculations'
-      secant[:] = np.array(self.modSecant)
-    # endwith
-  # end writeNC()
-
-  def playground(self):
-    rObj = nc.Dataset('rrtmgp-inputs-outputs.nc', 'r')
-    tObj = nc.Dataset('rrtmgp-lw-inputs-outputs-clear-ang-3.nc', 'r')
+  def calcStats(self):
+    rObj = nc.Dataset(self.outNC, 'r')
+    tObj = nc.Dataset(self.refNC, 'r')
 
     testFlux = np.array(rObj.variables['gpt_flux_dn'])[:,0,:]
     refFlux = np.array(tObj.variables['gpt_flux_dn'])[:,0,:]
     diff = testFlux-refFlux
-    print(diff.std(ddof=1))
-    print(diff.flatten().std(ddof=1))
-
     rObj.close()
     tObj.close()
-  # end playground
+
+    self.err = np.array(diff)
+    self.errAvg = diff.mean()
+    self.errAbsAvg = np.abs(diff).mean()
+    self.errSpread = np.sqrt(np.mean(diff**2))
+  # end calcStats()
+
+  def plotErrT(self):
+    """
+    Plot flux error as a function of transmittance for optimized angle
+    """
+
+    outPNG = '%s_flux_errors_transmittance_opt_ang.png' % \
+      self.pngPrefix
+    tran = self.transmittance.flatten()
+    err = self.err.flatten()
+    iSort = np.argsort(tran)
+    plot.plot(tran[iSort], err[iSort], '-')
+
+    # aesthetics
+    plot.ylabel('$F_{1-angle}-F_{3-angle}$')
+    plot.xlabel('Transmittance')
+    plot.title('Flux Error, Optimized')
+    plot.gca().axhline(0, linestyle='--', color='k')
+    plot.savefig(outPNG)
+    plot.close()
+    print('Wrote %s' % outPNG)
+  # end plotErrT()
+
 # end secantRecalc
 
 if __name__ == '__main__':
@@ -471,7 +503,7 @@ if __name__ == '__main__':
   parser.add_argument('--angle_resolution', '-res', type=int, \
     default=1, help='Angle resolution over which to loop.')
   parser.add_argument('--executable', '-e', type=str, \
-    default='test_lw_solver_noscat_opt_angs', \
+    default='lw_solver_opt_angs', \
     help='RRTMGP flux solver executable for fluxErr and ' + \
     'secantRecalc classes, respectively.')
   parser.add_argument('--template_nc', '-temp', type=str, \
@@ -479,6 +511,9 @@ if __name__ == '__main__':
     help='netCDF that is used as input into executable. The ' + \
     'code will copy it and use a naming convention that the ' + \
     'executable expects.')
+  parser.add_argument('--secant_nc', '-snc', type=str, \
+    default='optimized_secants.nc', \
+    help='Path to netCDF file to which secant array is written.')
   parser.add_argument('--test_dir', '-td', type=str, \
     default='./trial_results', \
     help='Directory to which the results from RRTMGP runs are saved.')
@@ -514,23 +549,19 @@ if __name__ == '__main__':
   else:
     # loop over all angles (inclusive), generating a fluxErr object 
     # for each angle and profile, which we'll combine using another 
-    # class; fErrAll contains objects for all profiles and angles
+    # class; fErrAll contains objects for all angles
     fErrAll = []
-    for iProf in range(args.profiles):
-      # fErrAng contains objects for all angles for a given profile
-      fErrAng = []
-      for ang in np.arange(angles[0], angles[1]+res, res):
-        print('Running Profile %d, %d degrees' % (iProf+1, ang))
-        fErr = fluxErr(ang, iProf, vars(args))
-        fErr.refExtract()
-        fErr.runRRTMGP()
-        fErrAng.append(fErr)
-      # end angle loop
+    for ang in np.arange(angles[0], angles[1]+res, res):
+      print('Running calculations at %d degrees' % ang)
+      fErr = fluxErr(ang, vars(args))
+      fErr.refExtract()
+      fErr.writeSecNC()
+      fErr.runRRTMGP()
+      fErrAll.append(fErr)
+    # end angle loop
 
-      fErrAll.append(fErrAng)
-
-      # save the output for later plotting
-      pickle.dump(fErrAll, open(pFile, 'wb'))
+    # save the output for later plotting
+    pickle.dump(fErrAll, open(pFile, 'wb'))
     # end profile loop
   # endif npzFile
 
@@ -538,16 +569,28 @@ if __name__ == '__main__':
   combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
   
+  print('%10s%15s%15s%10s' % \
+    ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+  for iAng, ang in enumerate(combObj.angles):
+    print('%10.2d%15.4f%15.4f%10.4f' % \
+      (combObj.angles[iAng], combObj.errAvg[iAng], \
+       combObj.errAbsAvg[iAng], combObj.errSpread[iAng]) )
+  # end angle loop
+
   if args.plot_fit:
     combObj.fitErrT()
     combObj.fitAngT()
-    combObj.plotErrT()
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
-    reSecObj = secantRecalc(fErrAll, combObj)
-    reSecObj.writeNC()
-    reSecObj.playground()
+    reSecObj = secantRecalc(vars(args), fErrAll, combObj)
+    reSecObj.refExtract()
+    reSecObj.writeSecNC()
+    reSecObj.runRRTMGP()
+    reSecObj.calcStats()
+    print('%10s%15.4f%15.4f%10.4f' % \
+      ('Opt', reSecObj.errAvg, reSecObj.errAbsAvg, reSecObj.errSpread))
+    reSecObj.plotErrT()
   else:
     combObj.plotErrT()
     # probably should never be used anymore...
