@@ -153,6 +153,7 @@ class fluxErr():
     if self.relErr: self.fluxErr /= self.fluxRef
 
   # end runRRTMGP()
+
 # end fluxErr
 
 class combineErr():
@@ -288,6 +289,15 @@ class combineErr():
       self.transmittance = np.array(tran)
       self.err = np.array(sErr).T
     # end smoothing
+
+    print('%10s%15s%15s%10s' % \
+      ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+    for iAng, ang in enumerate(combObj.angles):
+      print('%10.2d%15.4f%15.4f%10.4f' % \
+        (self.angles[iAng], self.errAvg[iAng], \
+         self.errAbsAvg[iAng], self.errSpread[iAng]) )
+  # end angle loop
+
   # end makeArrays()
 
   def plotErrT(self):
@@ -348,10 +358,16 @@ class combineErr():
     """
 
     leg, fits, roots, newAng = [], [], [], []
+
+    # well keep the data (for plotHist) as well, but we do need to 
+    # rebuild the array in case some of the angles don't have any 
+    # roots
+    origDat = []
+
     tran = np.array(self.transmittance)
     for iErr, errAng in enumerate(self.err):
       # don't plot curves for all angles
-      if iErr % self.samplingAng != 0: continue
+      #if iErr % self.samplingAng != 0: continue
 
       iSort = np.argsort(tran)
 
@@ -366,6 +382,7 @@ class combineErr():
       fits.append(fitDat)
       roots.append(root)
       newAng.append(self.angles[iErr])
+      origDat.append(errAng)
 
       # legend string -- ?? degrees
       leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
@@ -374,6 +391,7 @@ class combineErr():
     self.fitsErrTran = np.array(fits)
     self.rootsErrTran = np.array(roots)
     self.angles = np.array(newAng)
+    self.err = np.array(origDat)
     self.secants = 1/np.cos(np.radians(self.angles))
 
   # end fitErrT()
@@ -397,6 +415,31 @@ class combineErr():
     coeffs = np.polyfit(self.rootsErrTran, self.secants, 3)
     self.secTFit = np.poly1d(coeffs)
   # end fitAngT()
+
+  def plotDist(self):
+    """
+    Generate probability (mass) distributions of the test-ref 
+    residuals
+    """
+
+    binning = np.arange(-0.15, 0.15, 0.01)
+    for iAng, angErr in enumerate(self.err):
+      # calculate histogram, then normalize bins
+      # plot.hist() only does probability *density* histograms, so we
+      # have to make our own probability *mass* plots
+      heights, bins = np.histogram(angErr, bins=binning)
+      heights = heights.astype(float)/sum(heights)
+
+      plot.bar(bins[:-1], heights, \
+        width=(max(bins)-min(bins))/len(bins))
+      plot.xlabel(self.yLab)
+      plot.ylabel('% in Bin')
+      outPNG = 'Rel_Err_distribution_ang%2d.png' % self.angles[iAng]
+      plot.savefig(outPNG)
+      plot.close()
+      print('Wrote %s' % outPNG)
+    # end angle loop
+  # end plotHist()
 # end combineErr
 
 class secantRecalc(fluxErr):
@@ -436,9 +479,18 @@ class secantRecalc(fluxErr):
     self.outNC = '%s_opt_ang.nc' % split[0]
 
     self.pngPrefix = str(inDict['prefix'])
+
+    self.relErr = bool(inDict['relative_err'])
+    self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
+      self.relErr else '$F_{1-angle}-F_{3-angle}$'
   # constructor
 
   def calcStats(self):
+    """
+    Calculate the same statistics as combineErr.makeArrays() for the 
+    optimized angles.
+    """
+
     rObj = nc.Dataset(self.outNC, 'r')
     tObj = nc.Dataset(self.refNC, 'r')
 
@@ -452,6 +504,11 @@ class secantRecalc(fluxErr):
     self.errAvg = diff.mean()
     self.errAbsAvg = np.abs(diff).mean()
     self.errSpread = np.sqrt(np.mean(diff**2))
+
+    print('%10s%15s%15s%10s' % \
+      ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+    print('%10s%15.4f%15.4f%10.4f' % \
+      ('Opt', self.errAvg, self.errAbsAvg, self.errSpread))
   # end calcStats()
 
   def plotErrT(self):
@@ -467,7 +524,7 @@ class secantRecalc(fluxErr):
     plot.plot(tran[iSort], err[iSort], '-')
 
     # aesthetics
-    plot.ylabel('$F_{1-angle}-F_{3-angle}$')
+    plot.ylabel(self.yLab)
     plot.xlabel('Transmittance')
     plot.title('Flux Error, Optimized')
     plot.gca().axhline(0, linestyle='--', color='k')
@@ -476,6 +533,29 @@ class secantRecalc(fluxErr):
     print('Wrote %s' % outPNG)
   # end plotErrT()
 
+  def plotDist(self):
+    """
+    Generate probability (mass) distributions of the test-ref 
+    residuals
+    """
+
+    binning = np.arange(-0.15, 0.15, 0.01)
+    # calculate histogram, then normalize bins
+    # plot.hist() only does probability *density* histograms, so we
+    # have to make our own probability *mass* plots
+    heights, bins = np.histogram(self.err, bins=binning)
+    heights = heights.astype(float)/sum(heights)
+
+    plot.bar(bins[:-1], heights, \
+      width=(max(bins)-min(bins))/len(bins))
+    plot.xlabel(self.yLab)
+    plot.ylabel('% in Bin')
+    outPNG = 'Rel_Err_distribution_optAng.png'
+    plot.savefig(outPNG)
+    plot.close()
+    print('Wrote %s' % outPNG)
+    # end angle loop
+  # end plotHist()
 # end secantRecalc
 
 if __name__ == '__main__':
@@ -569,17 +649,10 @@ if __name__ == '__main__':
   combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
   
-  print('%10s%15s%15s%10s' % \
-    ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
-  for iAng, ang in enumerate(combObj.angles):
-    print('%10.2d%15.4f%15.4f%10.4f' % \
-      (combObj.angles[iAng], combObj.errAvg[iAng], \
-       combObj.errAbsAvg[iAng], combObj.errSpread[iAng]) )
-  # end angle loop
-
   if args.plot_fit:
     combObj.fitErrT()
     combObj.fitAngT()
+    combObj.plotDist()
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
@@ -588,9 +661,8 @@ if __name__ == '__main__':
     reSecObj.writeSecNC()
     reSecObj.runRRTMGP()
     reSecObj.calcStats()
-    print('%10s%15.4f%15.4f%10.4f' % \
-      ('Opt', reSecObj.errAvg, reSecObj.errAbsAvg, reSecObj.errSpread))
     reSecObj.plotErrT()
+    reSecObj.plotDist()
   else:
     combObj.plotErrT()
     # probably should never be used anymore...
