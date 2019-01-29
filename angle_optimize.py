@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 from __future__ import print_function
 
@@ -215,7 +215,7 @@ class combineErr():
 
   def makeArrays(self):
     """
-    Generate and transformt arrays of transmittances and flux error
+    Generate and transform arrays of transmittances and flux error
     for plotting
     """
 
@@ -253,9 +253,6 @@ class combineErr():
     temp = np.transpose(np.array(err), axes=(1, 0, 2))
     self.err = temp.reshape(\
       (self.nAngles, self.nG * self.nProfiles))
-    self.errAvg = self.err.mean(axis=1)
-    self.errAbsAvg = np.abs(self.err).mean(axis=1)
-    self.errSpread = np.sqrt(np.mean(self.err**2, axis=1))
 
     if self.smooth:
       tran = np.arange(0, 1+self.binning, self.binning)
@@ -289,16 +286,47 @@ class combineErr():
       self.transmittance = np.array(tran)
       self.err = np.array(sErr).T
     # end smoothing
-
-    print('%10s%15s%15s%10s' % \
-      ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
-    for iAng, ang in enumerate(combObj.angles):
-      print('%10.2d%15.4f%15.4f%10.4f' % \
-        (self.angles[iAng], self.errAvg[iAng], \
-         self.errAbsAvg[iAng], self.errSpread[iAng]) )
-  # end angle loop
-
   # end makeArrays()
+
+  def calcStats(self, sums=False):
+    """
+    Calculate statistics for the errors for each angle
+
+    Keywords
+      sums -- boolean, print sums of diff and err squares instead of
+        the moments of the error array
+    """
+
+    err = np.array(self.err)
+    self.errAvg = err.mean(axis=1)
+    self.errAbsAvg = np.abs(err).mean(axis=1)
+    self.errSpread = err.std(ddof=1, axis=1)
+
+    for iAng, ang in enumerate(self.angles):
+      if sums:
+        # are the sum of squares equal magnitudes? they should be 
+        # with the fits we're doing
+        diff = err[iAng, :]
+        iNeg = np.where(diff < 0)[0]
+        iPos = np.where(diff > 0)[0]
+        if iAng == 0:
+          print('%10s%10s%10s%10s' % ('neg2', 'pos2', 'neg', 'pos'))
+
+        print('%10.3f%10.3f%10.3f%10.3f' % \
+          ((diff[iNeg]**2).sum(), (diff[iPos]**2).sum(), \
+           diff[iNeg].sum(), diff[iPos].sum()))
+      else:
+        # print statistics to standard output
+        if iAng == 0:
+          print('%10s%15s%15s%10s' % \
+            ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+
+        print('%10.2d%15.4f%15.4f%10.4f' % \
+          (self.angles[iAng], self.errAvg[iAng], \
+           self.errAbsAvg[iAng], self.errSpread[iAng]) )
+      # endif sums
+    # end angle loop
+  # end calcStats()
 
   def plotErrT(self):
     """
@@ -353,8 +381,8 @@ class combineErr():
 
   def fitErrT(self):
     """
-    Fit a cubic spline to the curve for each angle for better 
-    determination of the root
+    Fit a cubic polynomial to the error-t curve for each angle for 
+    better determination of the root
     """
 
     leg, fits, roots, newAng = [], [], [], []
@@ -372,13 +400,17 @@ class combineErr():
       iSort = np.argsort(tran)
 
       # fit a cubic spline to the curve for this angle
-      fit = INTER.UnivariateSpline(tran[iSort], errAng[iSort])
-      fitDat = fit(tran[iSort])
-
-      # some a posteriori hand waving here...
-      angRoots = fit.roots()
+      # some a posteriori hand waving when there are multiple 
+      # viable (0 <= t <= 1) roots...typically one of the three roots
+      # for the cubics was negative and another was > 1, so i just 
+      # use the "middle" one. this is fine given an appropriate 
+      # range of angles
+      fit = np.polyfit(tran[iSort], errAng[iSort], 3)
+      fitDat = np.poly1d(fit)(tran[iSort])
+      angRoots = np.roots(fit)
       if len(angRoots) == 0: continue
-      root = angRoots[-1] if len(angRoots) > 1 else angRoots[0]
+      root = angRoots[1]
+
       fits.append(fitDat)
       roots.append(root)
       newAng.append(self.angles[iErr])
@@ -395,6 +427,30 @@ class combineErr():
     self.secants = 1/np.cos(np.radians(self.angles))
 
   # end fitErrT()
+
+  def fitErrAng(self):
+    """
+    Fit a cubic polynomial to the curve (err vs. angle) for each 
+    transmittance for better determination of the root
+    """
+
+    tran = np.array(self.transmittance)
+    iSort = np.argsort(tran)
+    tran = tran[iSort]
+    err = self.err.T[iSort]
+
+    fits, roots = [], []
+    for iTran, errTran in enumerate(err):
+      if tran[iTran] < 0.05: continue
+      fit = np.polyfit(self.angles, errTran, 3)
+      fitDat = np.poly1d(fit)(self.angles)
+      angRoots = np.roots(fit)
+      if len(angRoots) == 0: continue
+      fits.append(fitDat)
+      roots.append(angRoots[1])
+    # end tranErr loop
+    roots = np.array(roots)
+  # end fitErrAng()
 
   def fitAngT(self):
     """
@@ -483,32 +539,50 @@ class secantRecalc(fluxErr):
     self.relErr = bool(inDict['relative_err'])
     self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
       self.relErr else '$F_{1-angle}-F_{3-angle}$'
-  # constructor
 
-  def calcStats(self):
-    """
-    Calculate the same statistics as combineErr.makeArrays() for the 
-    optimized angles.
-    """
-
-    rObj = nc.Dataset(self.outNC, 'r')
-    tObj = nc.Dataset(self.refNC, 'r')
-
-    testFlux = np.array(rObj.variables['gpt_flux_dn'])[:,0,:]
-    refFlux = np.array(tObj.variables['gpt_flux_dn'])[:,0,:]
-    diff = testFlux-refFlux
-    rObj.close()
-    tObj.close()
+    with nc.Dataset(self.refNC) as rObj, \
+      nc.Dataset(self.outNC) as tObj:
+      testFlux = np.array(tObj.variables[self.fluxStr])[:,0,:]
+      refFlux = np.array(rObj.variables[self.fluxStr])[:,0,:]
+      diff = testFlux-refFlux
+    # endwith
 
     self.err = np.array(diff)
-    self.errAvg = diff.mean()
-    self.errAbsAvg = np.abs(diff).mean()
-    self.errSpread = np.sqrt(np.mean(diff**2))
+  # constructor
 
-    print('%10s%15s%15s%10s' % \
-      ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
-    print('%10s%15.4f%15.4f%10.4f' % \
-      ('Opt', self.errAvg, self.errAbsAvg, self.errSpread))
+  def calcStats(self, sums=False):
+    """
+    Calculate statistics for the errors for each angle
+
+    Lame...pretty much just a c/p of combineErr.calcStats()...
+
+    Keywords
+      sums -- boolean, print sums of diff and err squares instead of
+        the moments of the error array
+    """
+
+    err = np.array(self.err)
+    self.errAvg = err.mean()
+    self.errAbsAvg = np.abs(err).mean()
+    self.errSpread = err.std(ddof=1)
+
+    if sums:
+      # are the sum of squares equal magnitudes? they should be with
+      # the fits we're doing
+      iNeg = np.where(err < 0)[0]
+      iPos = np.where(err > 0)[0]
+      print('%10s%10s%10s%10s' % \
+        ('neg2', 'pos2', 'neg', 'pos'))
+      print('%10.3f%10.3f%10.3f%10.3f' % \
+        ((err[iNeg]**2).sum(), (err[iPos]**2).sum(), \
+         err[iNeg].sum(), err[iPos].sum()))
+    else:
+      # print statistics to standard output
+      print('%10s%15s%15s%10s' % \
+        ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+      print('%10s%15.4f%15.4f%10.4f' % \
+        ('Opt', self.errAvg, self.errAbsAvg, self.errSpread) )
+    # endif sums
   # end calcStats()
 
   def plotErrT(self):
@@ -521,13 +595,14 @@ class secantRecalc(fluxErr):
     tran = self.transmittance.flatten()
     err = self.err.flatten()
     iSort = np.argsort(tran)
-    plot.plot(tran[iSort], err[iSort], '-')
+    plot.plot(tran[iSort], err[iSort], 'o')
 
     # aesthetics
     plot.ylabel(self.yLab)
     plot.xlabel('Transmittance')
     plot.title('Flux Error, Optimized')
     plot.gca().axhline(0, linestyle='--', color='k')
+    plot.ylim([-0.01, 0.01])
     plot.savefig(outPNG)
     plot.close()
     print('Wrote %s' % outPNG)
@@ -539,11 +614,14 @@ class secantRecalc(fluxErr):
     residuals
     """
 
-    binning = np.arange(-0.15, 0.15, 0.01)
+    err = self.err.flatten()
+
+    binning = np.arange(-0.15, 0.17, 0.01)
+
     # calculate histogram, then normalize bins
     # plot.hist() only does probability *density* histograms, so we
     # have to make our own probability *mass* plots
-    heights, bins = np.histogram(self.err, bins=binning)
+    heights, bins = np.histogram(err, bins=binning)
     heights = heights.astype(float)/sum(heights)
 
     plot.bar(bins[:-1], heights, \
@@ -618,6 +696,10 @@ if __name__ == '__main__':
   parser.add_argument('--plot_fit', '-fit', action='store_true', \
     help='Plot the cubic spline fit to the errors instead of ' + \
     'raw errors.')
+  parser.add_argument('--print_sums', '-ps', action='store_true', \
+    help='Print sums of positive diffs and negative diffs ' + \
+    'to make sure the fit minimized the errors (so these two ' + \
+    'quantities should be equal).')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -648,11 +730,13 @@ if __name__ == '__main__':
   # combine the flux error arrays for plotting and fitting
   combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
+  combObj.calcStats(sums=args.print_sums)
   
   if args.plot_fit:
+    combObj.fitErrAng()
     combObj.fitErrT()
     combObj.fitAngT()
-    combObj.plotDist()
+    #combObj.plotDist()
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
@@ -660,8 +744,8 @@ if __name__ == '__main__':
     reSecObj.refExtract()
     reSecObj.writeSecNC()
     reSecObj.runRRTMGP()
-    reSecObj.calcStats()
-    reSecObj.plotErrT()
+    reSecObj.calcStats(sums=args.print_sums)
+    #reSecObj.plotErrT()
     reSecObj.plotDist()
   else:
     combObj.plotErrT()

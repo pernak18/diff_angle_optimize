@@ -7,3 +7,4 @@ lw_solver_opt_angs
 trial_results
 save_files
 *.png
+eli_netCDF.py
