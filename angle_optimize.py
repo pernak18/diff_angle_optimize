@@ -182,6 +182,9 @@ class combineErr():
         prob_dist -- boolean, plot probability distribution
         plot_fit -- boolean, plot fits to the flux errors as a 
           function of t rather than raw flux errors
+        diagnostic -- boolean, plot diagnostic secant(roots) vs. 
+          transmittance to see how well first fit does
+        cutoff -- float, transmittance under which no fit is done
     """
 
     self.allObj = list(fluxErrList)
@@ -211,6 +214,9 @@ class combineErr():
         r'($\overline{\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}}$)'
       self.xLab += ' (Binning = %.2f)' % self.binning
     # end smooth labels
+
+    self.diagnostic = bool(inDict['diagnostic'])
+    self.tCut = float(inDict['t_cutoff'])
   # end constructor
 
   def makeArrays(self):
@@ -219,7 +225,7 @@ class combineErr():
     for plotting
     """
 
-    # we wanna loop over all profiles and append their "spectra" 
+    # we wanna loop over all profiles and append their err curves
     # onto each other so we can combine all profiles' err vs. t onto 
     # same plot
 
@@ -253,6 +259,14 @@ class combineErr():
     temp = np.transpose(np.array(err), axes=(1, 0, 2))
     self.err = temp.reshape(\
       (self.nAngles, self.nG * self.nProfiles))
+
+    # now we need to filter out low transmittances, since the err vs.
+    # angle behavior is not well-behaved
+    iTran = np.where(self.transmittance >= self.tCut)[0]
+    if iTran.size == 0: sys.exit('No viable transmittances, exiting')
+
+    self.transmittance = self.transmittance[iTran]
+    self.err = self.err[:,iTran]
 
     if self.smooth:
       tran = np.arange(0, 1+self.binning, self.binning)
@@ -436,40 +450,93 @@ class combineErr():
 
     tran = np.array(self.transmittance)
     iSort = np.argsort(tran)
-    tran = tran[iSort]
-    err = self.err.T[iSort]
+    origTran = tran[iSort]
+    err = self.err.T[iSort, :]
 
-    fits, roots = [], []
+    fits, roots, newTran = [], [], []
+
+    self.secants = 1/np.cos(np.radians(self.angles))
+
     for iTran, errTran in enumerate(err):
-      if tran[iTran] < 0.05: continue
+      # np.polyfit produces a very noisy roots vs. t plot
+      """
       fit = np.polyfit(self.angles, errTran, 3)
       fitDat = np.poly1d(fit)(self.angles)
+
+      # convert roots to real array (there is no imaginary part, but 
+      # np.roots returns an imaginary root)
+      angRoots = np.abs(np.roots(fit))
       angRoots = np.roots(fit)
-      if len(angRoots) == 0: continue
       fits.append(fitDat)
-      roots.append(angRoots[1])
+
+      # what's the correct root? this is a little ad hoc since we know
+      # to be doing this analysis between 48 and 58 degrees
+      iRoot = np.where((angRoots >= 20) & (angRoots <= 60) & \
+        np.isreal(angRoots))[0]
+      roots.append(float(np.abs(angRoots[iRoot])))
+      """
+
+      # UnivariateSpline produces a much nicer roots vs. t plot
+      # but this really should be the same thing as np.polyfit to the
+      # degree 3 -- maybe this root finder is better? it's simpler...
+      fit = INTER.UnivariateSpline(self.secants, errTran)
+      tRoots = fit.roots()
+      if len(tRoots) == 0: continue
+
+      roots.append(float(tRoots))
+      fits.append(fit)
+      newTran.append(origTran[iTran])
     # end tranErr loop
-    roots = np.array(roots)
+
+    self.fitsErrAng = np.array(fits)
+    self.rootsErrAng = np.array(roots)
+    self.transmittance = np.array(newTran)
   # end fitErrAng()
 
-  def fitAngT(self):
+  def fitAngT(self, rootsStr='rootsErrAng', weights=False):
     """
     Using the roots determined in fitErrT, now generate a function of
     optimal angle dependent on transmission (i.e., roots)
+
+    Keywords
+      NEITHER OF THESE HAVE BEEN IMPLEMENTED INTO THE MAIN(), SO THERE
+      IS NO REAL FLEXIBILITY HERE UNLESS THE USER CHANGES THE VALUES 
+      OF THESE KEYWORDS MANUALLY
+
+      rootsStr -- string, which roots array to use in the fitting
+        should either be "rootsErrAng" (fit of error to angles for 
+        every transmittance) or "rootsErrT" (fit of error to 
+        transmittance for every angle)
+      weights -- boolean, calculate weights for each bin
     """
 
-    weights = []
-    tran = self.transmittance
-    roots = self.rootsErrTran
-    for iRoot, r2 in enumerate(roots):
-      r1 = 0 if iRoot == 0 else roots[iRoot-1]
-      inBin = np.where((tran >= r1) & (tran < r2))[0].size
-      weight = 0 if inBin == 0 else float(inBin)/tran.size
-      weights.append(weight)
-    # end root loop
+    tran = np.array(self.transmittance)
+    roots = np.array(getattr(self, rootsStr))
 
-    coeffs = np.polyfit(self.rootsErrTran, self.secants, 3)
+    if weights:
+      weights = []
+      for iRoot, r2 in enumerate(roots):
+        r1 = 0 if iRoot == 0 else roots[iRoot-1]
+        inBin = np.where((tran >= r1) & (tran < r2))[0].size
+        weight = 0 if inBin == 0 else float(inBin)/tran.size
+        weights.append(weight)
+      # end root loop
+    # endif weights
+
+    coeffs = np.polyfit(tran, roots, 3)
     self.secTFit = np.poly1d(coeffs)
+
+    if self.diagnostic:
+      plot.plot(tran, self.rootsErrAng, 'bo', \
+        tran, self.secTFit(tran), 'r')
+      plot.xlabel('Transmittance')
+      plot.ylabel('secant(roots)')
+      outPNG = 'preliminary_sec_T.png'
+      plot.savefig(outPNG)
+      plot.close()
+
+      print('Wrote %s' % outPNG)
+    # end diagnostic
   # end fitAngT()
 
   def plotDist(self):
@@ -523,12 +590,15 @@ class secantRecalc(fluxErr):
     # transmittances differ by profile and g-point
     # the nProf x nGpt arrays are the same for each angle, so just 
     # grab the array for the first angle
-    self.transmittance = np.array(inFluxErr[0].transmittance)
-    self.secant = self.secModel(self.transmittance)
+    tran = np.array(inFluxErr[0].transmittance)
+    self.secant = self.secModel(tran)
 
     secDims = self.secant.shape
     self.nG = secDims[0]
     self.nProf = secDims[1]
+
+    # for the rest of the analysis, we only need a t vector
+    self.transmittance = tran.flatten()
 
     self.template = 'rrtmgp-inputs-outputs.nc'
     split = self.template.split('.')
@@ -539,29 +609,25 @@ class secantRecalc(fluxErr):
     self.relErr = bool(inDict['relative_err'])
     self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
       self.relErr else '$F_{1-angle}-F_{3-angle}$'
-
-    with nc.Dataset(self.refNC) as rObj, \
-      nc.Dataset(self.outNC) as tObj:
-      testFlux = np.array(tObj.variables[self.fluxStr])[:,0,:]
-      refFlux = np.array(rObj.variables[self.fluxStr])[:,0,:]
-      diff = testFlux-refFlux
-    # endwith
-
-    self.err = np.array(diff)
   # constructor
 
   def calcStats(self, sums=False):
     """
     Calculate statistics for the errors for each angle
 
-    Lame...pretty much just a c/p of combineErr.calcStats()...
+    Lame...pretty much just a c/p of combineErr.calcStats()...but 
+    there are some reasons we have to do this...new err definition, 
+    for instance
 
     Keywords
       sums -- boolean, print sums of diff and err squares instead of
         the moments of the error array
     """
 
-    err = np.array(self.err)
+    err = self.fluxErr.flatten()
+    tran = np.array(self.transmittance)
+
+    self.err = np.array(err)
     self.errAvg = err.mean()
     self.errAbsAvg = np.abs(err).mean()
     self.errSpread = err.std(ddof=1)
@@ -592,8 +658,8 @@ class secantRecalc(fluxErr):
 
     outPNG = '%s_flux_errors_transmittance_opt_ang.png' % \
       self.pngPrefix
-    tran = self.transmittance.flatten()
-    err = self.err.flatten()
+    tran = np.array(self.transmittance.flatten())
+    err = np.array(self.err)
     iSort = np.argsort(tran)
     plot.plot(tran[iSort], err[iSort], 'o')
 
@@ -602,21 +668,25 @@ class secantRecalc(fluxErr):
     plot.xlabel('Transmittance')
     plot.title('Flux Error, Optimized')
     plot.gca().axhline(0, linestyle='--', color='k')
-    plot.ylim([-0.01, 0.01])
     plot.savefig(outPNG)
     plot.close()
     print('Wrote %s' % outPNG)
+
   # end plotErrT()
 
-  def plotDist(self):
+  def plotDist(self, tBinning=False):
     """
     Generate probability (mass) distributions of the test-ref 
     residuals
+
+    Keywords
+      tBinning -- boolean, plot separate histograms of errors for 
+        different transmittance bins (0 to 1 in bins of 0.1)
     """
 
-    err = self.err.flatten()
+    err = np.array(self.err)
 
-    binning = np.arange(-0.15, 0.17, 0.01)
+    binning = np.arange(-0.10, 0.10, 0.01)
 
     # calculate histogram, then normalize bins
     # plot.hist() only does probability *density* histograms, so we
@@ -632,7 +702,40 @@ class secantRecalc(fluxErr):
     plot.savefig(outPNG)
     plot.close()
     print('Wrote %s' % outPNG)
-    # end angle loop
+
+    if tBinning:
+      tBins1 = np.arange(0, 1, 0.1)
+      tBins2 = np.arange(0.1, 1.1, 0.1)
+      tran = np.array(self.transmittance.flatten())
+
+      print('%-15s%15s%15s%15s' % \
+        ('t Bin Start', 'Mean Err', 'Mean |Err|', 'Sigma Err'))
+
+      for t1, t2 in zip(tBins1, tBins2):
+        iBin = np.where((tran >= t1) & (tran < t2))[0]
+        if iBin.size == 0: continue
+        outPNG = 'Rel_Err_distribution_optAng_t%3.1f.png' % t1
+        binErr = err[iBin]
+
+        print('%-15.1f%15.4e%15.4e%15.4e' % \
+          (t1, binErr.mean(), np.abs(binErr).mean(), \
+           binErr.std(ddof=1)))
+
+        # now just do what we did for the entire sample
+        heights, bins = np.histogram(binErr, bins=binning)
+        heights = heights.astype(float)/sum(heights)
+
+        plot.bar(bins[:-1], heights, \
+          width=(max(bins)-min(bins))/len(bins))
+        plot.xlabel(self.yLab)
+        plot.ylabel('% in Bin')
+        plot.ylim([0, 1])
+        plot.title('%3.1f ' % t1 + r'$\leq$ ' + 't < %3.1f' % t2)
+        plot.savefig(outPNG)
+        plot.close()
+        #print('Wrote %s' % outPNG)
+      # end bin loop
+    # end tBinning
   # end plotHist()
 # end secantRecalc
 
@@ -700,6 +803,11 @@ if __name__ == '__main__':
     help='Print sums of positive diffs and negative diffs ' + \
     'to make sure the fit minimized the errors (so these two ' + \
     'quantities should be equal).')
+  parser.add_argument('--diagnostic', '-d', action='store_true', \
+    help='Plot diagnostic secant(roots) vs. transmittance to ' + \
+    'see how well first fit does.')
+  parser.add_argument('--t_cutoff', '-c', type=float, default=0.05, \
+    help='Cutoff in t under which flux errors are ignored.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -725,7 +833,7 @@ if __name__ == '__main__':
     # save the output for later plotting
     pickle.dump(fErrAll, open(pFile, 'wb'))
     # end profile loop
-  # endif npzFile
+  # endif pickle file
 
   # combine the flux error arrays for plotting and fitting
   combObj = combineErr(fErrAll, vars(args))
@@ -745,8 +853,9 @@ if __name__ == '__main__':
     reSecObj.writeSecNC()
     reSecObj.runRRTMGP()
     reSecObj.calcStats(sums=args.print_sums)
-    #reSecObj.plotErrT()
+    reSecObj.plotErrT()
     reSecObj.plotDist()
+    reSecObj.plotDist(tBinning=True)
   else:
     combObj.plotErrT()
     # probably should never be used anymore...
