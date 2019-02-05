@@ -185,6 +185,7 @@ class combineErr():
         diagnostic -- boolean, plot diagnostic secant(roots) vs. 
           transmittance to see how well first fit does
         cutoff -- float, transmittance under which no fit is done
+        weight -- boolean, weight the fitAngT() fit
     """
 
     self.allObj = list(fluxErrList)
@@ -195,6 +196,7 @@ class combineErr():
     self.samplingAng = inDict['angle_range'][2]
     self.pngPrefix = str(inDict['prefix'])
     self.plotFit = bool(inDict['plot_fit'])
+    self.weightFit = bool(inDict['weight'])
     if args.smooth: self.pngPrefix += '_smooth'
 
     # we're assuming all profiles were run over the same amount of 
@@ -232,14 +234,14 @@ class combineErr():
     # initialize lists and arrays
     angles, profs, sigmas = [], [], []
     err = np.zeros((self.nProfiles, self.nAngles, self.nG))
-    tran = np.zeros((self.nProfiles, self.nG))
 
     for iAng, angObj in enumerate(self.allObj):
       # these two lists will end up having nAng and nProf dim
       angles.append(angObj.angle)
 
-      # transmittance is the same for every angle run
+      # transmittance and weights are the same for every angle run
       tran = angObj.transmittance
+      weights = 1/angObj.fluxRef.flatten()
       err[:, iAng, :] = angObj.fluxErr
     # end loop over fluxErr objects
 
@@ -267,6 +269,7 @@ class combineErr():
 
     self.transmittance = self.transmittance[iTran]
     self.err = self.err[:,iTran]
+    self.weights = np.array(weights)[iTran]
 
     if self.smooth:
       tran = np.arange(0, 1+self.binning, self.binning)
@@ -453,7 +456,7 @@ class combineErr():
     origTran = tran[iSort]
     err = self.err.T[iSort, :]
 
-    fits, roots, newTran = [], [], []
+    fits, roots, newTran, newWeights = [], [], [], []
 
     self.secants = 1/np.cos(np.radians(self.angles))
 
@@ -477,7 +480,7 @@ class combineErr():
       """
 
       # UnivariateSpline produces a much nicer roots vs. t plot
-      # but this really should be the same thing as np.polyfit to the
+      # but this really should be the same thing as np.polyfit to 
       # degree 3 -- maybe this root finder is better? it's simpler...
       fit = INTER.UnivariateSpline(self.secants, errTran)
       tRoots = fit.roots()
@@ -486,14 +489,16 @@ class combineErr():
       roots.append(float(tRoots))
       fits.append(fit)
       newTran.append(origTran[iTran])
+      newWeights.append(self.weights[iTran])
     # end tranErr loop
 
     self.fitsErrAng = np.array(fits)
     self.rootsErrAng = np.array(roots)
     self.transmittance = np.array(newTran)
+    self.weights = np.array(newWeights)
   # end fitErrAng()
 
-  def fitAngT(self, rootsStr='rootsErrAng', weights=False):
+  def fitAngT(self, rootsStr='rootsErrAng'):
     """
     Using the roots determined in fitErrT, now generate a function of
     optimal angle dependent on transmission (i.e., roots)
@@ -513,17 +518,12 @@ class combineErr():
     tran = np.array(self.transmittance)
     roots = np.array(getattr(self, rootsStr))
 
-    if weights:
-      weights = []
-      for iRoot, r2 in enumerate(roots):
-        r1 = 0 if iRoot == 0 else roots[iRoot-1]
-        inBin = np.where((tran >= r1) & (tran < r2))[0].size
-        weight = 0 if inBin == 0 else float(inBin)/tran.size
-        weights.append(weight)
-      # end root loop
+    if self.weightFit:
+      coeffs = np.polyfit(tran, roots, 3, w=self.weights)
+    else:
+      coeffs = np.polyfit(tran, roots, 3)
     # endif weights
 
-    coeffs = np.polyfit(tran, roots, 3)
     self.secTFit = np.poly1d(coeffs)
 
     if self.diagnostic:
@@ -557,7 +557,9 @@ class combineErr():
         width=(max(bins)-min(bins))/len(bins))
       plot.xlabel(self.yLab)
       plot.ylabel('% in Bin')
-      outPNG = 'Rel_Err_distribution_ang%2d.png' % self.angles[iAng]
+      errStr = 'Rel' if self.relErr else 'Abs'
+      outPNG = '%s_Err_distribution_ang%2d.png' % \
+        (errStr, self.angles[iAng])
       plot.savefig(outPNG)
       plot.close()
       print('Wrote %s' % outPNG)
@@ -698,11 +700,13 @@ class secantRecalc(fluxErr):
       width=(max(bins)-min(bins))/len(bins))
     plot.xlabel(self.yLab)
     plot.ylabel('% in Bin')
-    outPNG = 'Rel_Err_distribution_optAng.png'
+    errStr = 'Rel' if self.relErr else 'Abs'
+    outPNG = '%s_Err_distribution_optAng.png' % errStr
     plot.savefig(outPNG)
     plot.close()
     print('Wrote %s' % outPNG)
 
+    errStr = 'Rel' if self.relErr else 'Abs'
     if tBinning:
       tBins1 = np.arange(0, 1, 0.1)
       tBins2 = np.arange(0.1, 1.1, 0.1)
@@ -714,7 +718,8 @@ class secantRecalc(fluxErr):
       for t1, t2 in zip(tBins1, tBins2):
         iBin = np.where((tran >= t1) & (tran < t2))[0]
         if iBin.size == 0: continue
-        outPNG = 'Rel_Err_distribution_optAng_t%3.1f.png' % t1
+        outPNG = '%s_Err_distribution_optAng_t%3.1f.png' % \
+          (errStr, t1)
         binErr = err[iBin]
 
         print('%-15.1f%15.4e%15.4e%15.4e' % \
@@ -808,6 +813,8 @@ if __name__ == '__main__':
     'see how well first fit does.')
   parser.add_argument('--t_cutoff', '-c', type=float, default=0.05, \
     help='Cutoff in t under which flux errors are ignored.')
+  parser.add_argument('--weight', '-w', action='store_true', \
+    help='Weight the fits with reference fluxes.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
