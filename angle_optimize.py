@@ -89,6 +89,8 @@ class fluxErr():
       # grab specified flux at specified layer
       self.fluxRef = \
         np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
+      self.wFlux = \
+        np.array(ncObj.variables['gpt_flux_dn'])[:, self.iLayer, :]
       dims = self.fluxRef.shape
       self.nG, self.nProf = dims
 
@@ -131,17 +133,14 @@ class fluxErr():
 
     # RRTMGP code does not need to be run for every profile (the 
     # output contains results for *all* profiles), just every angle
-    if os.path.exists(self.outNC):
-      print('%s already exists, not recomputing' % self.outNC)
-    else:
-      # stage the template into a file that RRTMGP expects
-      shutil.copyfile(self.exeRef, self.template)
+    # stage the template into a file that RRTMGP expects
+    shutil.copyfile(self.exeRef, self.template)
 
-      # run the RRTMGP flux calculator
-      sub.call([self.exe, str(self.angle)])
+    # run the RRTMGP flux calculator
+    sub.call([self.exe, str(self.angle)])
 
-      # move the output so it won't be overwritten
-      os.rename(self.template, self.outNC)
+    # move the output so it won't be overwritten
+    os.rename(self.template, self.outNC)
     # endif self.outNC
 
     with nc.Dataset(self.outNC, 'r') as ncObj:
@@ -241,7 +240,7 @@ class combineErr():
 
       # transmittance and weights are the same for every angle run
       tran = angObj.transmittance
-      weights = 1/angObj.fluxRef.flatten()
+      weights = angObj.fluxRef.flatten()
       err[:, iAng, :] = angObj.fluxErr
     # end loop over fluxErr objects
 
@@ -358,7 +357,7 @@ class combineErr():
       if iErr % self.samplingAng != 0: continue
 
       iSort = np.argsort(tran)
-      plot.plot(tran[iSort], errAng[iSort], '-')
+      plot.plot(tran[iSort], errAng[iSort], '.')
 
       # legend string -- ?? degrees
       leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
@@ -461,35 +460,38 @@ class combineErr():
     self.secants = 1/np.cos(np.radians(self.angles))
 
     for iTran, errTran in enumerate(err):
-      # np.polyfit produces a very noisy roots vs. t plot
-      """
-      fit = np.polyfit(self.angles, errTran, 3)
-      fitDat = np.poly1d(fit)(self.angles)
+      fit, cov = np.polyfit(self.secants, errTran, 3, cov=True)
+      fitDat = np.poly1d(fit)(self.secants)
 
       # convert roots to real array (there is no imaginary part, but 
       # np.roots returns an imaginary root)
-      angRoots = np.abs(np.roots(fit))
-      angRoots = np.roots(fit)
-      fits.append(fitDat)
+      # little ad hoc here, since i know the root need to be between
+      # 48 and 58 degrees, which is the range for our study
+      fitRoots = np.roots(fit)
+      angRoot = np.real(fitRoots[np.isreal(fitRoots)])
+      angRoot = angRoot[(angRoot >= 1.4) & (angRoot <= 1.9)]
+      
+      if len(angRoot) == 0: continue
+      fit = np.polyfit(self.secants, errTran, 3)
+      angRoot = float(angRoot)
 
-      # what's the correct root? this is a little ad hoc since we know
-      # to be doing this analysis between 48 and 58 degrees
-      iRoot = np.where((angRoots >= 20) & (angRoots <= 60) & \
-        np.isreal(angRoots))[0]
-      roots.append(float(np.abs(angRoots[iRoot])))
-      """
-
-      # UnivariateSpline produces a much nicer roots vs. t plot
-      # but this really should be the same thing as np.polyfit to 
-      # degree 3 -- maybe this root finder is better? it's simpler...
-      fit = INTER.UnivariateSpline(self.secants, errTran)
-      tRoots = fit.roots()
-      if len(tRoots) == 0: continue
-
-      roots.append(float(tRoots))
+      # gonna use the covariance matrix from polyfit to determine 
+      # the uncertainty that we will use in the weights
+      # ideal, i think we should have errors on the root, but i'm 
+      # not sure how to get that directly, and scaling the current
+      # weights (reference) flux with an this covariance-dependent
+      # uncertainty *can* give us the desired dimensionless weight
+      # (if we do absolute rather than relative)
+      # first propagate the errors of the coefficients at the root
+      sigmaCoeff = np.diag(cov)
+      sigma = np.sqrt( (angRoot**2 * sigmaCoeff[0])**2 + \
+        (angRoot * sigmaCoeff[1])**2 + sigmaCoeff[2])
       fits.append(fit)
+      roots.append(angRoot)
       newTran.append(origTran[iTran])
-      newWeights.append(self.weights[iTran])
+
+      # scale the weights inversely with uncertainty in fit
+      newWeights.append(self.weights[iTran]/sigma)
     # end tranErr loop
 
     self.fitsErrAng = np.array(fits)
@@ -504,15 +506,14 @@ class combineErr():
     optimal angle dependent on transmission (i.e., roots)
 
     Keywords
-      NEITHER OF THESE HAVE BEEN IMPLEMENTED INTO THE MAIN(), SO THERE
-      IS NO REAL FLEXIBILITY HERE UNLESS THE USER CHANGES THE VALUES 
-      OF THESE KEYWORDS MANUALLY
+      THIS KEYWORD HAS NOT BEEN IMPLEMENTED INTO THE MAIN(), SO THERE
+      IS NO REAL FLEXIBILITY HERE UNLESS THE USER CHANGES THE VALUE
+      OF IT MANUALLY
 
       rootsStr -- string, which roots array to use in the fitting
         should either be "rootsErrAng" (fit of error to angles for 
-        every transmittance) or "rootsErrT" (fit of error to 
+        every transmittance) or "rootsErrTran" (fit of error to 
         transmittance for every angle)
-      weights -- boolean, calculate weights for each bin
     """
 
     tran = np.array(self.transmittance)
@@ -821,37 +822,31 @@ if __name__ == '__main__':
   pFile = args.save_file
 
   # first make an nProf x nAngle x nGpoint array of flux differences
-  if os.path.exists(pFile):
-    fErrAll = pickle.load(open(pFile, 'rb'))
-  else:
-    # loop over all angles (inclusive), generating a fluxErr object 
-    # for each angle and profile, which we'll combine using another 
-    # class; fErrAll contains objects for all angles
-    fErrAll = []
-    for ang in np.arange(angles[0], angles[1]+res, res):
-      print('Running calculations at %d degrees' % ang)
-      fErr = fluxErr(ang, vars(args))
-      fErr.refExtract()
-      fErr.writeSecNC()
-      fErr.runRRTMGP()
-      fErrAll.append(fErr)
-    # end angle loop
+  # loop over all angles (inclusive), generating a fluxErr object 
+  # for each angle and profile, which we'll combine using another 
+  # class; fErrAll contains objects for all angles
+  fErrAll = []
+  for ang in np.arange(angles[0], angles[1]+res, res):
+    print('Running calculations at %d degrees' % ang)
+    fErr = fluxErr(ang, vars(args))
+    fErr.refExtract()
+    fErr.writeSecNC()
+    fErr.runRRTMGP()
+    fErrAll.append(fErr)
+  # end angle loop
 
-    # save the output for later plotting
-    pickle.dump(fErrAll, open(pFile, 'wb'))
-    # end profile loop
-  # endif pickle file
+  # save the single-angle output for later plotting
+  pickle.dump(fErrAll, open(pFile, 'wb'))
 
   # combine the flux error arrays for plotting and fitting
   combObj = combineErr(fErrAll, vars(args))
   combObj.makeArrays()
   combObj.calcStats(sums=args.print_sums)
-  
+
   if args.plot_fit:
     combObj.fitErrAng()
-    combObj.fitErrT()
     combObj.fitAngT()
-    #combObj.plotDist()
+    combObj.plotDist()
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
@@ -865,8 +860,6 @@ if __name__ == '__main__':
     reSecObj.plotDist(tBinning=True)
   else:
     combObj.plotErrT()
-    # probably should never be used anymore...
-    #combObj.plotThetaOptT()
   # endif plot_fit
 
 # end main()
