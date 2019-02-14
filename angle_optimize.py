@@ -563,7 +563,8 @@ class combineErr():
         tran, self.secTFit(tran), 'r')
       plot.xlabel('Transmittance')
       plot.ylabel('secant(roots)')
-      outPNG = 'preliminary_sec_T.png'
+      direction = 'up' if self.upwelling else 'down'
+      outPNG = '%s_sec_roots_T.png' % direction
       plot.savefig(outPNG)
       plot.close()
 
