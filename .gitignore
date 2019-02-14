@@ -8,3 +8,6 @@ trial_results
 save_files
 *.png
 eli_netCDF.py
+*pyc
+obsolete
+

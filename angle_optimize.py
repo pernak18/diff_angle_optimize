@@ -89,8 +89,6 @@ class fluxErr():
       # grab specified flux at specified layer
       self.fluxRef = \
         np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
-      self.wFlux = \
-        np.array(ncObj.variables['gpt_flux_dn'])[:, self.iLayer, :]
       dims = self.fluxRef.shape
       self.nG, self.nProf = dims
 
@@ -185,6 +183,8 @@ class combineErr():
           transmittance to see how well first fit does
         cutoff -- float, transmittance under which no fit is done
         weight -- boolean, weight the fitAngT() fit
+        err_estimate -- float, flux error used in error estimation 
+          (see fitErrAng() method)
     """
 
     self.allObj = list(fluxErrList)
@@ -196,6 +196,7 @@ class combineErr():
     self.pngPrefix = str(inDict['prefix'])
     self.plotFit = bool(inDict['plot_fit'])
     self.weightFit = bool(inDict['weight'])
+    self.error_estimate = float(inDict['err_estimate'])
     if args.smooth: self.pngPrefix += '_smooth'
 
     # we're assuming all profiles were run over the same amount of 
@@ -218,6 +219,9 @@ class combineErr():
 
     self.diagnostic = bool(inDict['diagnostic'])
     self.tCut = float(inDict['t_cutoff'])
+
+    # are we processing upwelling?
+    self.up = 'up' in fluxErrList[0].fluxStr
   # end constructor
 
   def makeArrays(self):
@@ -450,15 +454,81 @@ class combineErr():
     transmittance for better determination of the root
     """
 
+    def pointsAround(refPoint, secants, errors, upwelling=False):
+      """
+      Find the two error points in a fitted curve around a reference 
+      point, then use their associated angles (secants) to determine 
+      uncertainty in root on one side
+
+      Eli's method of error estimation, described in:
+      https://rrtmgp2.slack.com/archives/D942AU7QE/p1549899169021200
+
+      personal communication: if |errTran| never exceeds 
+      self.error_estimate, any angle minimizes the flux error, so our
+      error in angle is the span of angles
+
+      Inputs
+        refPoint -- float, flux error tolerance used for determining 
+          error in theta
+        angles -- float array, angles used in fitting (fitErrAng)
+        errors -- float array, flux errors used in fitting (fitErrAng)
+
+      Outputs
+        delta -- float, error on one side of the root found in 
+          fitErrAng
+
+      Keywords
+        upwelling -- boolean, process upwelling instead of downwelling
+          flux
+      """
+
+      if upwelling:
+        # upwelling errors decrease with higher angle, and this 
+        # function was designed to work with increasing error as a 
+        # function of angle
+        secants = secants[::-1]
+        errors = errors[::-1]
+      # end upwelling
+
+      refDiff = errors - refPoint
+
+      # find the closest point above refPoint
+      iDiffPos = np.where(refDiff > 0)[0]
+      iAngAbove = -1 if iDiffPos.size == 0 else iDiffPos[0]
+
+      # find the closest point below refPoint
+      iDiffNeg = np.where(refDiff < 0)[0]
+      iAngBelow = 0 if iDiffNeg.size == 0 else iDiffNeg[-1]
+
+      # linearly interpolate between two to find "exact" angle that 
+      # corresponds to refPoint error
+      if secants[iAngBelow] == secants[iAngAbove]:
+        # basically, if secants ends up being a single-element array,
+        # we don't have points on either side of refPoint and thus
+        # cannot perform a fit. if refPoint is positive, that means 
+        # we want to use the highest angle for one end of the error
+        # estimate. if it's negative, we want the lowest angle
+        # this has the effect of using all angles if |errTran| never 
+        # exceeds |self.error_estimate|
+        deltaAng = secants[-1] if refPoint > 0 else secants[0]
+      else:
+        abscissa = [secants[iAngBelow], secants[iAngAbove]]
+        ordinate = [errors[iAngBelow], errors[iAngAbove]]
+        coeffs = np.polyfit(abscissa, ordinate, 1)
+        deltaAng = (refPoint - coeffs[1])/coeffs[0]
+      # endif fitting
+
+      return deltaAng
+    # end pointsAround()
+
     tran = np.array(self.transmittance)
     iSort = np.argsort(tran)
     origTran = tran[iSort]
     err = self.err.T[iSort, :]
 
-    fits, roots, newTran, newWeights = [], [], [], []
-
     self.secants = 1/np.cos(np.radians(self.angles))
 
+    fits, roots, newTran, newWeights = [], [], [], []
     for iTran, errTran in enumerate(err):
       fit, cov = np.polyfit(self.secants, errTran, 3, cov=True)
       fitDat = np.poly1d(fit)(self.secants)
@@ -470,11 +540,41 @@ class combineErr():
       fitRoots = np.roots(fit)
       angRoot = np.real(fitRoots[np.isreal(fitRoots)])
       angRoot = angRoot[(angRoot >= 1.4) & (angRoot <= 1.9)]
-      
+
       if len(angRoot) == 0: continue
-      fit = np.polyfit(self.secants, errTran, 3)
       angRoot = float(angRoot)
 
+      # work pointsAround() function on each side of zero error
+      dAngNeg = \
+        pointsAround(-self.error_estimate, self.secants, errTran, \
+        upwelling=self.up)
+      dAngPos = \
+        pointsAround(self.error_estimate, self.secants, errTran, \
+        upwelling=self.up)
+
+      # account for reversed upwelling err vs. angle behavior wrt
+      # downwelling behavior
+      if self.up:
+        buff = float(dAngNeg)
+        dAngNeg = float(dAngPos)
+        dAngPos = float(buff)
+      # end upwelling
+
+      # deltaAng should always straddle the root
+      if dAngNeg > angRoot: dAngNeg = angRoot
+      if dAngPos < angRoot: dAngPos = angRoot
+
+      sigma = (dAngPos-dAngNeg) / 2
+
+      """
+      print('%10.4f%10.4f%10.4f%10.4f%10.4f%10.4f' % \
+        (origTran[iTran], dAngNeg, dAngPos, sigma, angRoot, \
+         self.weights[iTran]/sigma))
+      for sec, err in zip(self.secants, errTran): print(sec, err)
+      print()
+      """
+
+      """
       # gonna use the covariance matrix from polyfit to determine 
       # the uncertainty that we will use in the weights
       # ideal, i think we should have errors on the root, but i'm 
@@ -483,9 +583,18 @@ class combineErr():
       # uncertainty *can* give us the desired dimensionless weight
       # (if we do absolute rather than relative)
       # first propagate the errors of the coefficients at the root
+      # update: this is wrong for three reasons. 1) i did propagation
+      # of errors for a quadratic, 2) i get sigma on the flux 
+      # difference instead of a sigma on the associated root angle, 
+      # and 3) i'm only taking the diagonal elements into account, 
+      # suggesting that the fitted coefficients are not dependent on
+      # each other, which is not true (so i should be using the 
+      # entire covariance matrix). 1) is fine, but i don't know how
+      # to address 2) and 3), so i'm going with Eli's method
       sigmaCoeff = np.diag(cov)
       sigma = np.sqrt( (angRoot**2 * sigmaCoeff[0])**2 + \
         (angRoot * sigmaCoeff[1])**2 + sigmaCoeff[2])
+      """
       fits.append(fit)
       roots.append(angRoot)
       newTran.append(origTran[iTran])
@@ -814,6 +923,10 @@ if __name__ == '__main__':
     'see how well first fit does.')
   parser.add_argument('--t_cutoff', '-c', type=float, default=0.05, \
     help='Cutoff in t under which flux errors are ignored.')
+  parser.add_argument('--err_estimate', '-est', type=float, \
+    default=0.01, \
+    help='Cutoff used by fitErrAng() method in error estimation ' + \
+    'to deterimnine the weights for fitting in fitAngT().')
   parser.add_argument('--weight', '-w', action='store_true', \
     help='Weight the fits with reference fluxes.')
   args = parser.parse_args()
