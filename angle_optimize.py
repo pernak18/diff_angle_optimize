@@ -43,6 +43,8 @@ class fluxErr():
         executable -- str, path to flux calculation executable to run
         template_nc -- str, path to netCDF used for executable I/O
         secant_nc -- str, path to netCDF with secant array
+        suppress_stdout -- boolean, don't execute most of the print
+          statements that we have for progress reporting
     """
 
     self.refNC = str(inDict['reference'])
@@ -73,6 +75,7 @@ class fluxErr():
     split = self.template.split('.')
 
     self.secNC = inDict['secant_nc']
+    self.noSout = inDict['suppress_stdout']
   # end constructor
 
   def refExtract(self):
@@ -176,6 +179,8 @@ class combineErr():
         weight -- boolean, weight the fitAngT() fit
         err_estimate -- float, flux error used in error estimation 
           (see fitErrAng() method)
+        suppress_stdout -- boolean, don't execute most of the print
+          statements that we have for progress reporting
     """
 
     self.allObj = list(fluxErrList)
@@ -213,6 +218,8 @@ class combineErr():
 
     # are we processing upwelling?
     self.up = 'up' in fluxErrList[0].fluxStr
+
+    self.noSout = inDict['suppress_stdout']
   # end constructor
 
   def makeArrays(self):
@@ -317,24 +324,28 @@ class combineErr():
       if sums:
         # are the sum of squares equal magnitudes? they should be 
         # with the fits we're doing
-        diff = err[iAng, :]
-        iNeg = np.where(diff < 0)[0]
-        iPos = np.where(diff > 0)[0]
-        if iAng == 0:
-          print('%10s%10s%10s%10s' % ('neg2', 'pos2', 'neg', 'pos'))
+        if not self.noSout:
+          diff = err[iAng, :]
+          iNeg = np.where(diff < 0)[0]
+          iPos = np.where(diff > 0)[0]
+          if iAng == 0:
+            print('%10s%10s%10s%10s' % ('neg2', 'pos2', 'neg', 'pos'))
 
-        print('%10.3f%10.3f%10.3f%10.3f' % \
-          ((diff[iNeg]**2).sum(), (diff[iPos]**2).sum(), \
-           diff[iNeg].sum(), diff[iPos].sum()))
+          print('%10.3f%10.3f%10.3f%10.3f' % \
+            ((diff[iNeg]**2).sum(), (diff[iPos]**2).sum(), \
+             diff[iNeg].sum(), diff[iPos].sum()))
+        # endif standard out
       else:
-        # print statistics to standard output
-        if iAng == 0:
-          print('%10s%15s%15s%10s' % \
-            ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+        if not self.noSout:
+          # print statistics to standard output
+          if iAng == 0:
+            print('%10s%15s%15s%10s' % \
+              ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
 
-        print('%10.2d%15.4f%15.4f%10.4f' % \
-          (self.angles[iAng], self.errAvg[iAng], \
-           self.errAbsAvg[iAng], self.errSpread[iAng]) )
+          print('%10.2d%15.4f%15.4f%10.4f' % \
+            (self.angles[iAng], self.errAvg[iAng], \
+             self.errAbsAvg[iAng], self.errSpread[iAng]) )
+        # endif standard out
       # endif sums
     # end angle loop
   # end calcStats()
@@ -367,7 +378,7 @@ class combineErr():
     plot.gca().axhline(0, linestyle='--', color='k')
     plot.savefig(outPNG)
     plot.close()
-    print('Wrote %s' % outPNG)
+    if not self.noSout: print('Wrote %s' % outPNG)
   # end plotErrT()
 
   def fitErrAng(self):
@@ -489,9 +500,9 @@ class combineErr():
       sigma = (dAngPos-dAngNeg) / 2
 
       """
-      print('%10.4f%10.4f%10.4f%10.4f%10.4f%10.4f' % \
+      print('%10.4f%10.4f%10.4f%10.4f%10.4f%10.4f%10.4f' % \
         (origTran[iTran], dAngNeg, dAngPos, sigma, angRoot, \
-         self.weights[iTran]/sigma))
+         self.weights[iTran], self.weights[iTran]/sigma))
       for sec, err in zip(self.secants, errTran): print(sec, err)
       print()
       """
@@ -551,6 +562,10 @@ class combineErr():
     roots = np.array(getattr(self, rootsStr))
 
     if self.weightFit:
+      # normalize weights
+      totWeight = self.weights.sum()
+      if totWeight != 1: self.weights /= totWeight
+
       coeffs = np.polyfit(tran, roots, 3, w=self.weights)
     else:
       coeffs = np.polyfit(tran, roots, 3)
@@ -559,16 +574,21 @@ class combineErr():
     self.secTFit = np.poly1d(coeffs)
 
     if self.diagnostic:
-      plot.plot(tran, self.rootsErrAng, 'bo', \
-        tran, self.secTFit(tran), 'r')
+      from matplotlib import cm
+
+      plot.scatter(tran, self.rootsErrAng, \
+        c=self.weights, cmap=cm.jet, s=20)
+      plot.plot(tran, self.secTFit(tran), 'r')
       plot.xlabel('Transmittance')
       plot.ylabel('secant(roots)')
-      direction = 'up' if self.upwelling else 'down'
+      cbar = plot.colorbar(orientation='horizontal')
+      cbar.set_label('Weight')
+      direction = 'up' if self.up else 'down'
       outPNG = '%s_sec_roots_T.png' % direction
       plot.savefig(outPNG)
       plot.close()
 
-      print('Wrote %s' % outPNG)
+      if not self.noSout: print('Wrote %s' % outPNG)
     # end diagnostic
   # end fitAngT()
 
@@ -595,7 +615,7 @@ class combineErr():
         (errStr, self.angles[iAng])
       plot.savefig(outPNG)
       plot.close()
-      print('Wrote %s' % outPNG)
+      if not self.noSout: print('Wrote %s' % outPNG)
     # end angle loop
   # end plotHist()
 # end combineErr
@@ -644,6 +664,8 @@ class secantRecalc(fluxErr):
     self.relErr = bool(inDict['relative_err'])
     self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
       self.relErr else '$F_{1-angle}-F_{3-angle}$'
+
+    self.noSout = inFluxErr[0].noSout
   # constructor
 
   def calcStats(self, sums=False):
@@ -668,21 +690,25 @@ class secantRecalc(fluxErr):
     self.errSpread = err.std(ddof=1)
 
     if sums:
-      # are the sum of squares equal magnitudes? they should be with
-      # the fits we're doing
-      iNeg = np.where(err < 0)[0]
-      iPos = np.where(err > 0)[0]
-      print('%10s%10s%10s%10s' % \
-        ('neg2', 'pos2', 'neg', 'pos'))
-      print('%10.3f%10.3f%10.3f%10.3f' % \
-        ((err[iNeg]**2).sum(), (err[iPos]**2).sum(), \
-         err[iNeg].sum(), err[iPos].sum()))
+      if not self.noSout:
+        # are the sum of squares equal magnitudes? they should be with
+        # the fits we're doing
+        iNeg = np.where(err < 0)[0]
+        iPos = np.where(err > 0)[0]
+        print('%10s%10s%10s%10s' % \
+          ('neg2', 'pos2', 'neg', 'pos'))
+        print('%10.3f%10.3f%10.3f%10.3f' % \
+          ((err[iNeg]**2).sum(), (err[iPos]**2).sum(), \
+           err[iNeg].sum(), err[iPos].sum()))
+      # endif stdout
     else:
-      # print statistics to standard output
-      print('%10s%15s%15s%10s' % \
-        ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
-      print('%10s%15.4f%15.4f%10.4f' % \
-        ('Opt', self.errAvg, self.errAbsAvg, self.errSpread) )
+      if not self.noSout:
+        # print statistics to standard output
+        print('%10s%15s%15s%10s' % \
+          ('Ang', 'Mean Err', 'Mean |Err|', 'SD Err'))
+        print('%10s%15.4f%15.4f%10.4f' % \
+          ('Opt', self.errAvg, self.errAbsAvg, self.errSpread) )
+      # endif stdout
     # endif sums
   # end calcStats()
 
@@ -705,7 +731,7 @@ class secantRecalc(fluxErr):
     plot.gca().axhline(0, linestyle='--', color='k')
     plot.savefig(outPNG)
     plot.close()
-    print('Wrote %s' % outPNG)
+    if not self.noSout: print('Wrote %s' % outPNG)
 
   # end plotErrT()
 
@@ -737,7 +763,7 @@ class secantRecalc(fluxErr):
     outPNG = '%s_Err_distribution_optAng.png' % errStr
     plot.savefig(outPNG)
     plot.close()
-    print('Wrote %s' % outPNG)
+    if not self.noSout: print('Wrote %s' % outPNG)
 
     errStr = 'Rel' if self.relErr else 'Abs'
     if tBinning:
@@ -745,8 +771,10 @@ class secantRecalc(fluxErr):
       tBins2 = np.arange(0.1, 1.1, 0.1)
       tran = np.array(self.transmittance.flatten())
 
-      print('%-15s%15s%15s%15s' % \
-        ('t Bin Start', 'Mean Err', 'Mean |Err|', 'Sigma Err'))
+      if not self.noSout:
+        print('%-15s%15s%15s%15s' % \
+          ('t Bin Start', 'Mean Err', 'Mean |Err|', 'Sigma Err'))
+      # endif stdout
 
       for t1, t2 in zip(tBins1, tBins2):
         iBin = np.where((tran >= t1) & (tran < t2))[0]
@@ -755,10 +783,12 @@ class secantRecalc(fluxErr):
           (errStr, t1)
         binErr = err[iBin]
 
-        print('%-15.1f%15.4e%15.4e%15.4e' % \
-          (t1, binErr.mean(), np.abs(binErr).mean(), \
-           binErr.std(ddof=1)))
-
+        if not self.noSout:
+          print('%-15.1f%15.4e%15.4e%15.4e' % \
+            (t1, binErr.mean(), np.abs(binErr).mean(), \
+             binErr.std(ddof=1)))
+        # endif stout
+        
         # now just do what we did for the entire sample
         heights, bins = np.histogram(binErr, bins=binning)
         heights = heights.astype(float)/sum(heights)
@@ -849,6 +879,9 @@ if __name__ == '__main__':
     'to deterimnine the weights for fitting in fitAngT().')
   parser.add_argument('--weight', '-w', action='store_true', \
     help='Weight the fits with reference fluxes.')
+  parser.add_argument('--suppress_stdout', '-ss', \
+    action='store_true', \
+    help='Skip over most of the print statements.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -860,7 +893,8 @@ if __name__ == '__main__':
   # class; fErrAll contains objects for all angles
   fErrAll = []
   for ang in np.arange(angles[0], angles[1]+res, res):
-    print('Running calculations at %d degrees' % ang)
+    if not args.suppress_stdout:
+      print('Running calculations at %d degrees' % ang)
     fErr = fluxErr(ang, vars(args))
     fErr.refExtract()
     fErr.writeSecNC()
@@ -886,9 +920,11 @@ if __name__ == '__main__':
     combObj.fitErrAng()
     combObj.fitAngT()
     combObj.plotDist()
+
     np.savez(npzFile, fluxErr=fErrAll, combined=combObj, \
       atts=vars(args))
-    print('Saved objects to %s' % npzFile)
+    if not args.suppress_stdout:
+      print('Saved objects to %s' % npzFile)
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
