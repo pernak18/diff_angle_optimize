@@ -370,75 +370,6 @@ class combineErr():
     print('Wrote %s' % outPNG)
   # end plotErrT()
 
-  def plotThetaOptT(self):
-    """
-    Plot optimized diffusivity angle (i.e., angle the minimizes error 
-    error between 1- and 3-angle flux calculations) as a function of
-    transmittance
-    """
-
-    outPNG = '%s_opt_angle_transmittance.png' % self.pngPrefix
-    iErrMin = np.argmin(np.abs(self.err), axis=0)
-    iSort = np.argsort(self.transmittance)
-    plot.plot(self.transmittance[iSort], self.angles[iErrMin][iSort], 'o')
-    plot.xlabel(self.xLab)
-    plot.ylabel(r'$\theta_{optimized}$')
-    plot.title('Diffusivity Angle Optimization')
-    plot.savefig(outPNG)
-    plot.close()
-
-    print('Wrote %s' % outPNG)
-  # end plotThetaOptT()
-
-  def fitErrT(self):
-    """
-    Fit a cubic polynomial to the error-t curve for each angle for 
-    better determination of the root
-    """
-
-    leg, fits, roots, newAng = [], [], [], []
-
-    # well keep the data (for plotHist) as well, but we do need to 
-    # rebuild the array in case some of the angles don't have any 
-    # roots
-    origDat = []
-
-    tran = np.array(self.transmittance)
-    for iErr, errAng in enumerate(self.err):
-      # don't plot curves for all angles
-      #if iErr % self.samplingAng != 0: continue
-
-      iSort = np.argsort(tran)
-
-      # fit a cubic spline to the curve for this angle
-      # some a posteriori hand waving when there are multiple 
-      # viable (0 <= t <= 1) roots...typically one of the three roots
-      # for the cubics was negative and another was > 1, so i just 
-      # use the "middle" one. this is fine given an appropriate 
-      # range of angles
-      fit = np.polyfit(tran[iSort], errAng[iSort], 3)
-      fitDat = np.poly1d(fit)(tran[iSort])
-      angRoots = np.roots(fit)
-      if len(angRoots) == 0: continue
-      root = angRoots[1]
-
-      fits.append(fitDat)
-      roots.append(root)
-      newAng.append(self.angles[iErr])
-      origDat.append(errAng)
-
-      # legend string -- ?? degrees
-      leg.append('%d' % self.angles[iErr] + r'$^{\circ}$')
-    # end angle loop
-
-    self.fitsErrTran = np.array(fits)
-    self.rootsErrTran = np.array(roots)
-    self.angles = np.array(newAng)
-    self.err = np.array(origDat)
-    self.secants = 1/np.cos(np.radians(self.angles))
-
-  # end fitErrT()
-
   def fitErrAng(self):
     """
     Fit a cubic polynomial to the curve (err vs. angle) for each 
@@ -944,10 +875,19 @@ if __name__ == '__main__':
   combObj.makeArrays()
   combObj.calcStats(sums=args.print_sums)
 
+  # for combining up and down fluxes (each separate fluxErr and 
+  # combineErr objects) into a single object in a separate script, 
+  # we need to save the inputs into the secantRecalc class
+  dirStr = 'dn' if 'dn' in args.flux_str else 'up'
+  npzFile = 'secantRecalc_inputs_%s.npz' % dirStr
+
   if args.plot_fit:
     combObj.fitErrAng()
     combObj.fitAngT()
     combObj.plotDist()
+    np.savez(npzFile, fluxErr=fErrAll, combined=combObj, \
+      atts=vars(args))
+    print('Saved objects to %s' % npzFile)
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
