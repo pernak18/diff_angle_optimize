@@ -806,7 +806,7 @@ class secantRecalc(fluxErr):
         plot.title('%3.1f ' % t1 + r'$\leq$ ' + 't < %3.1f' % t2)
         plot.savefig(outPNG)
         plot.close()
-        #print('Wrote %s' % outPNG)
+        if not self.noSout: print('Wrote %s' % outPNG)
       # end bin loop
     # end tBinning
   # end plotHist()
