@@ -121,10 +121,13 @@ class fluxErr():
     # endwith
   # end writeSecNC()
 
-  def runRRTMGP(self):
+  def runRRTMGP(self, saveNC=False):
     """
     Run RRTMGP flux calculator at single angle, then calculate 
     test-reference errors, then plot as a function of transmittance
+
+    saveNC -- boolean, move the rrtmgp-input-outputs.nc file to a 
+      new file for later usage (self.outNC must be set)
     """
 
     # RRTMGP code does not need to be run for every profile (the 
@@ -142,6 +145,8 @@ class fluxErr():
 
     self.fluxErr = self.fluxTest-self.fluxRef
     if self.relErr: self.fluxErr /= self.fluxRef
+
+    if saveNC: os.rename(self.template, self.outNC)
 
   # end runRRTMGP()
 
@@ -931,7 +936,7 @@ if __name__ == '__main__':
     reSecObj = secantRecalc(vars(args), fErrAll, combObj)
     reSecObj.refExtract()
     reSecObj.writeSecNC()
-    reSecObj.runRRTMGP()
+    reSecObj.runRRTMGP(saveNC=True)
     reSecObj.calcStats(sums=args.print_sums)
     reSecObj.plotErrT()
     reSecObj.plotDist()
