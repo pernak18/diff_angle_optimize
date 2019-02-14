@@ -43,8 +43,6 @@ class fluxErr():
         executable -- str, path to flux calculation executable to run
         template_nc -- str, path to netCDF used for executable I/O
         secant_nc -- str, path to netCDF with secant array
-        test_dir -- str, path to which the results from RRTMGP runs 
-          will be written
     """
 
     self.refNC = str(inDict['reference'])
@@ -71,11 +69,8 @@ class fluxErr():
     self.exeRef = inDict['template_nc']
     utils.file_check(self.exeRef)
 
-    self.outDir = inDict['test_dir']; utils.file_check(self.outDir)
-
     self.template = 'rrtmgp-inputs-outputs.nc'
     split = self.template.split('.')
-    self.outNC = '%s/%s_ang%02d.nc' % (self.outDir, split[0], inAng)
 
     self.secNC = inDict['secant_nc']
   # end constructor
@@ -137,11 +132,7 @@ class fluxErr():
     # run the RRTMGP flux calculator
     sub.call([self.exe, str(self.angle)])
 
-    # move the output so it won't be overwritten
-    os.rename(self.template, self.outNC)
-    # endif self.outNC
-
-    with nc.Dataset(self.outNC, 'r') as ncObj:
+    with nc.Dataset(self.template, 'r') as ncObj:
       self.fluxTest = \
         np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
     # endwith
@@ -890,9 +881,6 @@ if __name__ == '__main__':
   parser.add_argument('--secant_nc', '-snc', type=str, \
     default='optimized_secants.nc', \
     help='Path to netCDF file to which secant array is written.')
-  parser.add_argument('--test_dir', '-td', type=str, \
-    default='./trial_results', \
-    help='Directory to which the results from RRTMGP runs are saved.')
   parser.add_argument('--relative_err', '-r', action='store_true', \
     help='Plot relative rather than absolete flux errors')
   parser.add_argument('--save_file', '-s', type=str, \
