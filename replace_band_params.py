@@ -5,6 +5,7 @@ from __future__ import print_function
 import os, sys, argparse
 import numpy as np
 import netCDF4 as nc
+import shutil
 
 # git submodule
 sys.path.append('common')
@@ -28,6 +29,8 @@ class newRef:
 
     self.refNC = inDict['reference_nc']; utils.file_check(self.refNC)
     self.optNC = inDict['optimized_nc']; utils.file_check(self.optNC)
+    self.moveNC = inDict['mv']
+    self.pathNB = inDict['notebook_path']
 
     # for heating rate calculations
     self.heatFactor = 8.4391
@@ -112,6 +115,11 @@ class newRef:
 
     print('Replaced flux fields in %s' % self.refNC)
 
+    if self.moveNC:
+      shutil.copyfile(self.refNC, self.pathNB)
+      print('%s copied to %s' % (self.refNC, self.pathNB))
+    # endif move
+
   # end fieldReplace()
 # end newRef
 
@@ -127,6 +135,16 @@ if __name__ == '__main__':
     default='rrtmgp-inputs-outputs_opt_ang_weighted_rel.nc', \
     help='netCDF generated with angle_optimize.py module. It ' + \
     'contains downwelling and upwelling g-point spectral fluxes.')
+  parser.add_argument('--mv', '-mv', action='store_true', \
+    help='Move the reference netCDF with newly-calculated ' + \
+    'fluxes to the Jupyter notebook directory.')
+  parser.add_argument('--notebook_path', '-n', type=str, \
+    default='/rd47/scratch/RRTMGP/paper/' + \
+    'rte-rrtmgp-paper-figures/data/' + \
+    'rrtmgp-lw-inputs-outputs-optAng.nc', \
+    help='Path to file in Jupyter notebook that compares ' + \
+    'RRTMGP results to reference results. The new reference ' + \
+    'file will be moved to this destination if --mv is set.')
   args = parser.parse_args()
 
   newRefObj = newRef(vars(args))

@@ -15,6 +15,9 @@ from scipy import interpolate as INTER
 sys.path.append('common')
 import utils
 
+# local module
+import replace_band_params as BANDS
+
 # for plots
 font_prop = font.FontProperties()
 font_prop.set_size(8)
@@ -571,9 +574,10 @@ class combineErr():
       totWeight = self.weights.sum()
       if totWeight != 1: self.weights /= totWeight
 
-      coeffs = np.polyfit(tran, roots, 3, w=self.weights)
+      coeffs = np.polyfit(tran, roots, 1, w=self.weights)
+      print(coeffs, self.weights.size)
     else:
-      coeffs = np.polyfit(tran, roots, 3)
+      coeffs = np.polyfit(tran, roots, 1)
     # endif weights
 
     self.secTFit = np.poly1d(coeffs)
@@ -586,6 +590,7 @@ class combineErr():
       plot.plot(tran, self.secTFit(tran), 'r')
       plot.xlabel('Transmittance')
       plot.ylabel('secant(roots)')
+      plot.ylim([1.4, 1.9])
       cbar = plot.colorbar(orientation='horizontal')
       cbar.set_label('Weight')
       direction = 'up' if self.up else 'down'
@@ -806,7 +811,7 @@ class secantRecalc(fluxErr):
         plot.title('%3.1f ' % t1 + r'$\leq$ ' + 't < %3.1f' % t2)
         plot.savefig(outPNG)
         plot.close()
-        if not self.noSout: print('Wrote %s' % outPNG)
+        #if not self.noSout: print('Wrote %s' % outPNG)
       # end bin loop
     # end tBinning
   # end plotHist()
@@ -941,6 +946,17 @@ if __name__ == '__main__':
     reSecObj.plotErrT()
     reSecObj.plotDist()
     reSecObj.plotDist(tBinning=True)
+
+    # make new netCDF for use in Jupyter notebook
+    newRefObj = BANDS.newRef(\
+      {'reference_nc': 'rrtmgp-lw-inputs-outputs-default.nc', \
+       'optimized_nc': reSecObj.outNC, 'mv': True, \
+       'notebook_path': '/rd47/scratch/RRTMGP/paper/' + \
+       'rte-rrtmgp-paper-figures/data/' + \
+       'rrtmgp-lw-inputs-outputs-optAng.nc'})
+    newRefObj.extractVars()
+    newRefObj.calcBands()
+    newRefObj.fieldReplace()
   else:
     combObj.plotErrT()
   # endif plot_fit
