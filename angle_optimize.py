@@ -3,6 +3,12 @@
 from __future__ import print_function
 
 import os, sys, pickle
+
+if sys.version_info[0] < 3:
+  print('Must be using Python 3')
+  sys.exit(1)
+# end version check
+
 import numpy as np
 import matplotlib.pyplot as plot
 import matplotlib.font_manager as font
@@ -48,6 +54,9 @@ class fluxErr():
         secant_nc -- str, path to netCDF with secant array
         suppress_stdout -- boolean, don't execute most of the print
           statements that we have for progress reporting
+        by_band -- boolean, do a by-band instead of a by-g-point 
+          analysis
+        band_num -- boolean, band to process if by_band is set
     """
 
     self.refNC = str(inDict['reference'])
@@ -79,6 +88,19 @@ class fluxErr():
 
     self.secNC = inDict['secant_nc']
     self.noSout = inDict['suppress_stdout']
+    self.byBand = inDict['by_band']
+    self.iBand = inDict['band_num']-1
+
+    # each g-point has a weight. this is in the literature but 
+    # was also provided by Eli in 
+    # https://rrtmgp2.slack.com/archives/D942AU7QE/p1550264049021200
+    # these will only be used if we're doing the by-band calculations
+    self.gWeights = np.array([0.1527534276, 0.1491729617, \
+      0.1420961469, 0.1316886544,  0.1181945205,  0.1019300893, \
+      0.0832767040, 0.0626720116, 0.0424925000,0.0046269894, \
+      0.0038279891, 0.0030260086, 0.0022199750, 0.0014140010, \
+      0.0005330000, 0.0000750000])
+
   # end constructor
 
   def refExtract(self):
@@ -96,6 +118,25 @@ class fluxErr():
       # calculate the transmitance
       od = np.array(ncObj.variables['tau']).sum(axis=1)
       self.transmittance = np.exp(-od)
+
+      if self.byBand:
+        self.bandInd1, self.bandInd2 = \
+          np.array(ncObj.variables['band_lims_gpt'])[self.iBand]
+        self.bandInd1, self.bandInd2 = \
+          self.bandInd1-1, self.bandInd2-1
+
+        # slice the arrays (should be of dim nGpt x nProf)
+        # doing a transpose for easier matrix multiplication with 
+        # weights
+        fluxRef = self.fluxRef[self.bandInd1:self.bandInd2+1, :].T
+        transmittance = \
+          self.transmittance[self.bandInd1:self.bandInd2+1, :].T
+
+        # calculate the band averages for all profiles
+        # (basically a dot product with weights for each profile)
+        self.fluxRef = np.matmul(fluxRef, self.gWeights)
+        self.transmittance = np.matmul(transmittance, self.gWeights)
+      # endif bands
     # endwith
 
   # end refExtract
@@ -106,6 +147,12 @@ class fluxErr():
     will be read in by lw_solver_opt_angs (or whatever the 
     executable into main() is).
     """
+
+    if (type(self).__name__ == 'secantRecalc'):
+      # need to expand the secant array from nProf to nG x nProf
+      # for this to work in RRTMGP
+      self.secant = np.resize(self.secant, (self.nG, self.nProf))
+    # endif class check
 
     with nc.Dataset(self.secNC, 'w') as ncObj:
       ncObj.description = 'Secant values for every g-point of ' + \
@@ -146,7 +193,14 @@ class fluxErr():
         np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
     # endwith
 
-    self.fluxErr = self.fluxTest-self.fluxRef
+    if self.byBand:
+      fluxTest = self.fluxTest[self.bandInd1:self.bandInd2+1, :]
+      fluxErr = (fluxTest-self.fluxRef).T
+      self.fluxErr = np.matmul(fluxErr, self.gWeights)
+    else:
+      self.fluxErr = self.fluxTest-self.fluxRef
+    # endif byBand
+
     if self.relErr: self.fluxErr /= self.fluxRef
 
     if saveNC: os.rename(self.template, self.outNC)
@@ -178,7 +232,6 @@ class combineErr():
           than absolute flux differences
         smooth -- boolean, plot smooth curves
         binning -- float, transmittance binning for smoothing
-        prob_dist -- boolean, plot probability distribution
         plot_fit -- boolean, plot fits to the flux errors as a 
           function of t rather than raw flux errors
         diagnostic -- boolean, plot diagnostic secant(roots) vs. 
@@ -189,18 +242,22 @@ class combineErr():
           (see fitErrAng() method)
         suppress_stdout -- boolean, don't execute most of the print
           statements that we have for progress reporting
+        by_band -- boolean, do a by-band instead of a by-g-point 
+          analysis
+        band_num -- boolean, band to process if by_band is set
     """
 
     self.allObj = list(fluxErrList)
     self.relErr = bool(inDict['relative_err'])
     self.smooth = bool(inDict['smooth'])
     self.binning = inDict['binning']
-    self.probDist = inDict['prob_dist']
     self.samplingAng = inDict['angle_range'][2]
     self.pngPrefix = str(inDict['prefix'])
     self.plotFit = bool(inDict['plot_fit'])
     self.weightFit = bool(inDict['weight'])
     self.error_estimate = float(inDict['err_estimate'])
+    self.byBand = bool(inDict['by_band'])
+    self.iBand = int(inDict['band_num'])
     if args.smooth: self.pngPrefix += '_smooth'
 
     # we're assuming all profiles were run over the same amount of 
@@ -208,7 +265,7 @@ class combineErr():
     self.nAngles = len(fluxErrList)
     fErrDims = fluxErrList[0].fluxErr.shape
     self.nProfiles = fErrDims[0]
-    self.nG = fErrDims[1]
+    self.nG = 1 if self.byBand else fErrDims[1]
     self.iLayer = fluxErrList[0].iLayer
 
     self.yLab = r'$\frac{F_{1-angle}-F_{3-angle}}{F_{3-angle}}$' if \
@@ -242,7 +299,8 @@ class combineErr():
 
     # initialize lists and arrays
     angles, profs, sigmas = [], [], []
-    err = np.zeros((self.nProfiles, self.nAngles, self.nG))
+    err = np.zeros((self.nProfiles, self.nAngles)) if self.byBand \
+      else np.zeros((self.nProfiles, self.nAngles, self.nG))
 
     for iAng, angObj in enumerate(self.allObj):
       # these two lists will end up having nAng and nProf dim
@@ -251,7 +309,11 @@ class combineErr():
       # transmittance and weights are the same for every angle run
       tran = angObj.transmittance
       weights = angObj.fluxRef.flatten()
-      err[:, iAng, :] = angObj.fluxErr
+      if self.byBand:
+        err[:, iAng] = angObj.fluxErr
+      else:
+        err[:, iAng, :] = angObj.fluxErr
+      # endif band
     # end loop over fluxErr objects
 
     self.angles = np.unique(angles)
@@ -267,9 +329,13 @@ class combineErr():
 
     # want a [nAng x (nProf * nG)] 2-D array of errors where we 
     # combine all of the errors from profiles
-    temp = np.transpose(np.array(err), axes=(1, 0, 2))
-    self.err = temp.reshape(\
-      (self.nAngles, self.nG * self.nProfiles))
+    if self.byBand:
+      self.err = np.array(err).T
+    else:
+      temp = np.transpose(np.array(err), axes=(1, 0, 2))
+      self.err = temp.reshape(\
+        (self.nAngles, self.nG * self.nProfiles))
+    # endif band
 
     # now we need to filter out low transmittances, since the err vs.
     # angle behavior is not well-behaved
@@ -363,7 +429,13 @@ class combineErr():
     Plot flux error as a function of transmittance for every angle.
     """
 
-    outPNG = '%s_flux_errors_transmittance.png' % self.pngPrefix
+    if self.byBand:
+      outPNG = '%s_flux_errors_transmittance_band%02d.png' % \
+        (self.pngPrefix, self.iBand)
+    else:
+      outPNG = '%s_flux_errors_transmittance.png' % self.pngPrefix
+    # endif band
+
     leg, fits, roots, newAng = [], [], [], []
     tran = np.array(self.transmittance)
     for iErr, errAng in enumerate(self.err):
@@ -381,7 +453,7 @@ class combineErr():
     plot.xlabel(self.xLab)
     plot.ylabel(self.yLab)
     plot.title('Flux Error')
-    plot.legend(leg, numpoints=1, loc='upper left', \
+    plot.legend(leg, numpoints=1, loc='best', \
       prop=font_prop, framealpha=0.5)
     plot.gca().axhline(0, linestyle='--', color='k')
     plot.savefig(outPNG)
@@ -575,7 +647,6 @@ class combineErr():
       if totWeight != 1: self.weights /= totWeight
 
       coeffs = np.polyfit(tran, roots, 1, w=self.weights)
-      print(coeffs, self.weights.size)
     else:
       coeffs = np.polyfit(tran, roots, 1)
     # endif weights
@@ -594,7 +665,13 @@ class combineErr():
       cbar = plot.colorbar(orientation='horizontal')
       cbar.set_label('Weight')
       direction = 'up' if self.up else 'down'
-      outPNG = '%s_sec_roots_T.png' % direction
+      if self.byBand:
+        outPNG = '%s_sec_roots_T_band%02d.png' % \
+          (direction, self.iBand)
+      else:
+        outPNG = '%s_sec_roots_T.png' % direction
+      # endif bands
+
       plot.savefig(outPNG)
       plot.close()
 
@@ -621,8 +698,15 @@ class combineErr():
       plot.xlabel(self.yLab)
       plot.ylabel('% in Bin')
       errStr = 'Rel' if self.relErr else 'Abs'
-      outPNG = '%s_Err_distribution_ang%2d.png' % \
-        (errStr, self.angles[iAng])
+
+      if self.byBand:
+        outPNG = '%s_Err_distribution_ang%2d_band%02d.png' % \
+          (errStr, self.angles[iAng], self.iBand)
+      else:
+        outPNG = '%s_Err_distribution_ang%2d.png' % \
+          (errStr, self.angles[iAng])
+      # endif bands
+
       plot.savefig(outPNG)
       plot.close()
       if not self.noSout: print('Wrote %s' % outPNG)
@@ -658,16 +742,28 @@ class secantRecalc(fluxErr):
     tran = np.array(inFluxErr[0].transmittance)
     self.secant = self.secModel(tran)
 
-    secDims = self.secant.shape
-    self.nG = secDims[0]
-    self.nProf = secDims[1]
+    self.byBand = inFluxErr[0].byBand
+    if self.byBand:
+      self.nG = 1
+      self.nProf = self.secant.size
+      self.iBand = inDict['band_num']-1
+    else:
+      secDims = self.secant.shape
+      self.nG = secDims[0]
+      self.nProf = secDims[1]
+    # endif band
 
     # for the rest of the analysis, we only need a t vector
     self.transmittance = tran.flatten()
 
     self.template = 'rrtmgp-inputs-outputs.nc'
     split = self.template.split('.')
-    self.outNC = '%s_opt_ang.nc' % split[0]
+
+    if self.byBand:
+      self.outNC = '%s_opt_ang_band%02d.nc' % (split[0], self.iBand+1)
+    else:
+      self.outNC = '%s_opt_ang.nc' % split[0]
+    # endif bands
 
     self.pngPrefix = str(inDict['prefix'])
 
@@ -727,8 +823,14 @@ class secantRecalc(fluxErr):
     Plot flux error as a function of transmittance for optimized angle
     """
 
-    outPNG = '%s_flux_errors_transmittance_opt_ang.png' % \
-      self.pngPrefix
+    if self.byBand:
+      outPNG = '%s_flux_errors_transmittance_opt_ang_band%02d.png' % \
+        (self.pngPrefix, self.iBand+1)
+    else:
+      outPNG = '%s_flux_errors_transmittance_opt_ang.png' % \
+        self.pngPrefix
+    # endif bands
+
     tran = np.array(self.transmittance.flatten())
     err = np.array(self.err)
     iSort = np.argsort(tran)
@@ -770,7 +872,14 @@ class secantRecalc(fluxErr):
     plot.xlabel(self.yLab)
     plot.ylabel('% in Bin')
     errStr = 'Rel' if self.relErr else 'Abs'
-    outPNG = '%s_Err_distribution_optAng.png' % errStr
+
+    if self.byBand:
+      outPNG = '%s_Err_distribution_optAng_band%02d.png' % \
+        (errStr, self.iBand)
+    else:
+      outPNG = '%s_Err_distribution_optAng.png' % errStr
+    # endif bands
+
     plot.savefig(outPNG)
     plot.close()
     if not self.noSout: print('Wrote %s' % outPNG)
@@ -870,7 +979,9 @@ if __name__ == '__main__':
   parser.add_argument('--binning', '-b', type=float, default=0.01, \
     help='Binning to use in smoothing of the curves.')
   parser.add_argument('--prob_dist', '-pd', action='store_true', \
-    help='Plot probability distribution.')
+    help='Plot probability distribution. This will be done for ' + \
+    'each sample angle, then the optimized diffusivity angle, ' + \
+    'then in transmittance bins for the optimized angle.')
   parser.add_argument('--plot_fit', '-fit', action='store_true', \
     help='Plot the cubic spline fit to the errors instead of ' + \
     'raw errors.')
@@ -892,6 +1003,12 @@ if __name__ == '__main__':
   parser.add_argument('--suppress_stdout', '-ss', \
     action='store_true', \
     help='Skip over most of the print statements.')
+  parser.add_argument('--by_band', '-bb', action='store_true', \
+    help='Instead of optimizing using the g-points as training ' + \
+    'data, use band averages.')
+  parser.add_argument('--band_num', '-bn', type=int, default=1, \
+    help='If --by_band is specified, this is the (unit-offset) ' + \
+    'band to process.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -924,15 +1041,21 @@ if __name__ == '__main__':
   # combineErr objects) into a single object in a separate script, 
   # we need to save the inputs into the secantRecalc class
   dirStr = 'dn' if 'dn' in args.flux_str else 'up'
-  npzFile = 'secantRecalc_inputs_%s.npz' % dirStr
+  if args.by_band:
+    npzFile = 'secantRecalc_inputs_%s_band%02d.npz' % \
+      (dirStr, args.band_num)
+  else:
+    npzFile = 'secantRecalc_inputs_%s.npz' % dirStr
+  # endif by-band
 
   if args.plot_fit:
     combObj.fitErrAng()
     combObj.fitAngT()
-    combObj.plotDist()
+    if args.prob_dist: combObj.plotDist()
 
     np.savez(npzFile, fluxErr=fErrAll, combined=combObj, \
       atts=vars(args))
+
     if not args.suppress_stdout:
       print('Saved objects to %s' % npzFile)
 
@@ -944,8 +1067,11 @@ if __name__ == '__main__':
     reSecObj.runRRTMGP(saveNC=True)
     reSecObj.calcStats(sums=args.print_sums)
     reSecObj.plotErrT()
-    reSecObj.plotDist()
-    reSecObj.plotDist(tBinning=True)
+
+    if args.prob_dist: 
+      reSecObj.plotDist()
+      reSecObj.plotDist(tBinning=True)
+    # end histogram
 
     # make new netCDF for use in Jupyter notebook
     newRefObj = BANDS.newRef(\
