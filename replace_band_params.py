@@ -25,6 +25,9 @@ class newRef:
         optmized_nc -- string, netCDF generated with 
           angle_optimize.py module. It contains downwelling and 
           upwelling g-point spectral fluxes.
+        mv -- boolean, move the new netCDF to the Jupyter notebook 
+          directory for comparison with LBLRTM
+        notebook_path -- string, move netCDF to this path if mv is set
     """
 
     self.refNC = inDict['reference_nc']; utils.file_check(self.refNC)
@@ -48,6 +51,7 @@ class newRef:
       self.optDown = np.array(optObj.variables['gpt_flux_dn'])
       self.optUp = np.array(optObj.variables['gpt_flux_up'])
       self.pLevel = np.array(refObj.variables['p_lev'])
+      self.diffAngle = np.array(optObj.variables['diff_angle_g'])
 
       # want these indices to be zero-offset
       self.bandLimsG = np.array(optObj.variables['band_lims_gpt'])-1

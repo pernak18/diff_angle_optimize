@@ -152,6 +152,9 @@ class fluxErr():
       # need to expand the secant array from nProf to nG x nProf
       # for this to work in RRTMGP
       self.secant = np.resize(self.secant, (self.nG, self.nProf))
+      self.recalculating = True
+    else:
+      self.recalculating = False
     # endif class check
 
     with nc.Dataset(self.secNC, 'w') as ncObj:
@@ -188,9 +191,19 @@ class fluxErr():
     # run the RRTMGP flux calculator
     sub.call([self.exe, str(self.angle)])
 
-    with nc.Dataset(self.template, 'r') as ncObj:
+    with nc.Dataset(self.template, 'r+') as ncObj:
       self.fluxTest = \
         np.array(ncObj.variables[self.fluxStr])[:, self.iLayer, :]
+
+      # save the computed optimized angle array for reference
+      if self.recalculating:
+        outVar = ncObj.createVariable(\
+          'diff_angle_g', float, ('gpt', 'col'))
+        outVar.units = 'Degrees'
+        outVar.description = \
+          'Optimized diffusivity angle for flux calculations'
+        outVar[:] = np.degrees(np.arccos(1/self.secant))
+      # endif angle save
     # endwith
 
     if self.byBand:
@@ -646,9 +659,9 @@ class combineErr():
       totWeight = self.weights.sum()
       if totWeight != 1: self.weights /= totWeight
 
-      coeffs = np.polyfit(tran, roots, 1, w=self.weights)
+      coeffs = np.polyfit(tran, roots, 3, w=self.weights)
     else:
-      coeffs = np.polyfit(tran, roots, 1)
+      coeffs = np.polyfit(tran, roots, 3)
     # endif weights
 
     self.secTFit = np.poly1d(coeffs)
@@ -983,7 +996,7 @@ if __name__ == '__main__':
     'each sample angle, then the optimized diffusivity angle, ' + \
     'then in transmittance bins for the optimized angle.')
   parser.add_argument('--plot_fit', '-fit', action='store_true', \
-    help='Plot the cubic spline fit to the errors instead of ' + \
+    help='Plot the cubic fit to the errors instead of ' + \
     'raw errors.')
   parser.add_argument('--print_sums', '-ps', action='store_true', \
     help='Print sums of positive diffs and negative diffs ' + \
