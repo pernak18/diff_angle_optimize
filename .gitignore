@@ -11,4 +11,5 @@ eli_netCDF.py
 *pyc
 obsolete
 band_calculations
+verify_bandmerge.py
 

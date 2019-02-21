@@ -80,7 +80,7 @@ class bandMerge:
       # profiles)
       # if band has no optimized fluxes, just keep what we have
       # ad hoc: this only happened for upwelling
-      if np.all(np.isnan(bandObj.upBand[0,:,iBand])):
+      if np.all(np.isnan(bandObj.upBand[:,:,iBand])):
         with nc.Dataset(self.refNC, 'r') as ncObj:
           bandFluxUp.append(\
             np.array(ncObj.variables['band_flux_up'][:,:,iBand]))
