@@ -150,7 +150,8 @@ class fluxErr():
 
     if (type(self).__name__ == 'secantRecalc'):
       # need to expand the secant array from nProf to nG x nProf
-      # for this to work in RRTMGP
+      # for this to work in RRTMGP. in this case, we just assign the
+      # secant for a given band to all g-points
       self.secant = np.resize(self.secant, (self.nG, self.nProf))
       self.recalculating = True
     else:
@@ -626,7 +627,8 @@ class combineErr():
       newTran.append(origTran[iTran])
 
       # scale the weights inversely with uncertainty in fit
-      newWeights.append(self.weights[iTran]/sigma)
+      #newWeights.append(self.weights[iTran]/sigma)
+      newWeights.append(1/sigma)
     # end tranErr loop
 
     self.fitsErrAng = np.array(fits)
