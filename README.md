@@ -33,22 +33,32 @@ For optimization, the user should loop over a number of angles (as specified in 
 There are no required arguments for `angle_optimize.py` -- all arguments have default values assigned to them. However, the code has evolved substantially since its initial draft, and some default options may not work and certainly have not been tested. A typical call for downwelling fluxes is:
 
 ```
-angle_optimize
+angle_optimize.py -pre Garand_rel_down -r -a 48 58 3 -d -c 0.00 -w -fit
 ```
+
+To summarize the inputs:
+
+  - **-pre**: prefix for output files (is only used with one PNG -- the errors as a function of transmittance for all specified angles)
+  - **-r**: process relative errors instead of absolute errors
+  - **-a**: angle range (degrees) and resolution over which to *plot* them (netCDF files for every degree between `ang1` and `ang2` are generated, and the "resolution" argument is really just for aesthetic purposes)
+  - **-d**: plot a diagnostic figure of roots (secants) versus transmittance for every g-point and all profiles. also overplot the associated fit
+  - **-c**: ignore all transmittance points below this cutoff
+  - **-w**: use modified weights of reference flux/root uncertainty
+  - **-fit**: instead of plotting flux errors as a function of transmittance, follow through with the optimization analysis and produce figures for each step (flesh this out)
 
 And for upwelling:
 
 ```
-angle_optimize
+angle_optimize.py -pre Garand_rel_up -r -a 48 58 3 -d -c 0.00 -w -fs gpt_flux_up -l 42 -fit
 ```
 
-A full list of arguments is provided in [Table 1](#Table1). Note these arguments are also provided to the three classes in the `angle_optimize.py` module as attributes.
+A full list of arguments is provided in [Table 1](#Table1). Note these arguments are also provided to the three classes in the `angle_optimize.py` module as attributes. Documentation for these keywords is also provided when calling `angle_optimize.py` with `-h`.
 
 **`angle_optimize.py` Arguments** <a id="Table1"></a>
 
 | Argument | Notes |
 | :---: | :---: |
-| reference |  |
-| flux_str |  |
-| layer_index |  |
+| flesh |  |
+| this |  |
+| out |  |
 
