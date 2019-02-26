@@ -10,6 +10,10 @@ Note the `--recursive` option. This will clone the submodules necessary for this
 
 # Running the Software <a name="running"></a>
 
+## Prerequisites <a name="prereq"></a>
+
+A driver for the RRTMGP function `lw_solver_noscat` was written for the purpose of this optimization. Its source is located in the `lw_solver_noscat` subdirectory. The user will have to edit the `Makefile` so that the paths to the dependencies are correct (and likely will have to set the `RRTMGP` environment variable). The driver -- `lw_solver_opt_angs` -- can be built with a simple `make all` in the directory. `lw_solver_1ang.F90` can be ignored.
+
 ## Steps in processing <a name="steps"></a>
 
   1. Extract reference (i.e., 3-angle) RRTMGP fluxes and calculate transmittances given optical depths
@@ -22,8 +26,29 @@ Note the `--recursive` option. This will clone the submodules necessary for this
   8. Combine the roots for each data point onto a plot of `secant(theta)` as a function of transmittance
   9. Fit a curve to the data set in 8.
 
-Ideally, the user will loop over a number of angles (as specified in the `argparse` arguments), and processing steps. Each angle is its own object (`fluxErr` class), so the objects for all angles are combined (in the `combineErr` class). This new `combineErr` object is then used with the list of `fluxErr` objects in another class -- `secantRecalc` -- where 
+For optimization, the user should loop over a number of angles (as specified in the `argparse` arguments, documented in [Table 1](#Table1)), and process steps 1 through 4. A separate `fluxErr` object class needs to be instantiated for each angle, and the objects for all angles are combined in a `combineErr` object (steps 5 through 7). This new `combineErr` object is then used with a list of `fluxErr` objects in another class -- `secantRecalc` -- where steps 8 and 9 are performed.
 
 ## Using `main` in angle_optimize.py <a name="main"></a>
 
+There are no required arguments for `angle_optimize.py` -- all arguments have default values assigned to them. However, the code has evolved substantially since its initial draft, and some default options may not work and certainly have not been tested. A typical call for downwelling fluxes is:
+
+```
+angle_optimize
+```
+
+And for upwelling:
+
+```
+angle_optimize
+```
+
+A full list of arguments is provided in [Table 1](#Table1). Note these arguments are also provided to the three classes in the `angle_optimize.py` module as attributes.
+
+**`angle_optimize.py` Arguments** <a id="Table1"></a>
+
+| Argument | Notes |
+| :---: | :---: |
+| reference |  |
+| flux_str |  |
+| layer_index |  |
 
