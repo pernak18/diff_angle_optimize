@@ -52,6 +52,8 @@ And for upwelling:
 angle_optimize.py -pre Garand_rel_up -r -a 48 58 3 -d -c 0.00 -w -fs gpt_flux_up -l 42 -fit
 ```
 
+Inputs are mostly identical to the downwelling run, but we have to specify the string to use for flux extraction from the reference (3-angle) netCDF with the `-fs` argument, and the layer index `-l` is the TOA for upwelling (rather than surface for downwelling).
+
 A full list of arguments is provided in [Table 1](#Table1). Note these arguments are also provided to the three classes in the `angle_optimize.py` module as attributes. Documentation for these keywords is also provided when calling `angle_optimize.py` with `-h`.
 
 **`angle_optimize.py` Arguments** <a id="Table1"></a>

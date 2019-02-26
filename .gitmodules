@@ -1,3 +1,0 @@
-[submodule "common"]
-	path = common
-	url = git@lex-gitlab.aer.com:RC/common_modules.git
