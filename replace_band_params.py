@@ -66,14 +66,17 @@ class newRef:
     rates. Also do broadband calculations
     """
     
-    bandDown, bandUp, netArg = [], [], []
+    bandDown, bandUp, hrArg = [], [], []
     for iBand in self.bandLimsG:
       down = self.optDown[iBand[0]:iBand[1]+1, :, :].sum(axis=0)
       up = self.optUp[iBand[0]:iBand[1]+1, :, :].sum(axis=0)
       bandDown.append(down)
       bandUp.append(up)
-      netArg.append(np.diff(down-up, axis=0) / \
-        np.diff(self.pLevel, axis=0))
+
+      # i think for heating rates, pressures have to be in hPa (mbar)
+      # but in RRTMGP they are in Pa
+      hrArg.append(np.diff(down-up, axis=0) / \
+        np.diff(10*self.pLevel, axis=0))
     # end band loop
 
     # band flux arrays should be nLev x nProf x nBand
@@ -82,7 +85,7 @@ class newRef:
     self.upBand = np.transpose(np.array(bandUp), axes=outDim)
     self.netBand = self.downBand - self.upBand
     self.hrBand = self.heatFactor * \
-      np.transpose(np.array(netArg), axes=outDim) / 86400
+      np.transpose(np.array(hrArg), axes=outDim)
 
     # now broadband
     self.downBB = self.downBand.sum(axis=2)
