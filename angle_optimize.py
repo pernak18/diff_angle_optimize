@@ -593,6 +593,11 @@ class combineErr():
 
       sigma = (dAngPos-dAngNeg) / 2
 
+      # bands 4 and 14 for upwelling had zero uncertainty in the 
+      # optimized angle, but then we end up dividing by zero and do 
+      # not produce a solution
+      if sigma == 0: sigma = 1
+
       """
       print('%10.4f%10.4f%10.4f%10.4f%10.4f%10.4f%10.4f' % \
         (origTran[iTran], dAngNeg, dAngPos, sigma, angRoot, \
