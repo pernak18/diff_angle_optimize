@@ -76,7 +76,7 @@ class newRef:
       # i think for heating rates, pressures have to be in hPa (mbar)
       # but in RRTMGP they are in Pa
       hrArg.append(np.diff(down-up, axis=0) / \
-        np.diff(10*self.pLevel, axis=0))
+        np.diff(self.pLevel/100, axis=0))
     # end band loop
 
     # band flux arrays should be nLev x nProf x nBand
