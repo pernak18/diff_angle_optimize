@@ -25,7 +25,8 @@ class combinedSolution:
 
     self.upNPZ = inDict['up_npz']
     self.downNPZ = inDict['down_npz']
-    self.refNC = inDict['reference_nc']
+    self.refNC1 = inDict['reference_nc_1ang']
+    self.refNC3 = inDict['reference_nc_3ang']
     self.exe = inDict['exe_rrtmgp']
 
     if inDict['band']:
@@ -37,7 +38,8 @@ class combinedSolution:
     self.outPNG = inDict['out_png']
     self.outNC = inDict['out_nc']
 
-    inPaths = [self.upNPZ, self.downNPZ, self.refNC, self.exe]
+    inPaths = \
+      [self.upNPZ, self.downNPZ, self.refNC1, self.refNC3, self.exe]
     for f in inPaths: utils.file_check(f)
 
     # each g-point has a weight. this is in the literature but 
@@ -50,15 +52,105 @@ class combinedSolution:
       0.0038279891, 0.0030260086, 0.0022199750, 0.0014140010, \
       0.0005330000, 0.0000750000])
 
-    # eventually, this is gonna have to be more flexible, but for now
-    # every band has 16 g-points and we're only doing Garand profiles
-    # except i don't think ./lw_solver_opt_angs will work with 16
-    self.nGpt = 16 if self.band is not None else 256
-    self.nGpt = 256
-    self.nProf = 42
-
     self.rank = inDict['rank']
   # end constructor
+
+  def upDownComponents(self):
+    """
+    Extract separate up and down solutions
+    """
+
+    # grab flux errors from new optimized angle calculations
+    # we want separate up and down errors
+    # no fitting is done with these
+    upDat = np.load(self.upNPZ)
+    downDat = np.load(self.downNPZ)
+    upOpt = upDat['optAng'].item()
+    dnOpt = downDat['optAng'].item()
+
+    # these two should be identical
+    tCompUp, tCompDn = upOpt.transmittance, dnOpt.transmittance
+    if (np.all(tCompUp == tCompDn)):
+      self.tComp = tCompUp
+    else:
+      sys.exit('Up and down transmittances not equivalent, returning')
+    # endif equivalent t
+
+    upRelErr, dnRelErr = upOpt.err, dnOpt.err
+
+    # upErr and dnErr are likely relative errors (if the -r keyword
+    # was used with angle_optimize.py), so we can get absolute errors
+    # by multiplying the relative errors by the 3-angle reference flux
+    with nc.Dataset(self.refNC3, 'r') as ncObj:
+      upFlux3 = np.array(ncObj.variables['gpt_flux_up'])
+      dnFlux3 = np.array(ncObj.variables['gpt_flux_dn'])
+
+      # grab band indices, if necessary
+      if self.band is not None:
+        i1, i2 = \
+          np.array(ncObj.variables['band_lims_gpt'])[self.band, :] - 1
+        iArr = np.arange(i1, i2+1)
+
+        # only grab the reference fluxes for TOA (up) and 
+        # surface (down)
+        upFlux3 = upFlux3[iArr, -1, :].flatten()
+        dnFlux3 = dnFlux3[iArr, 0, :].flatten()
+      # endif band
+    # end with refNC3
+
+    upErr = {'rel': upRelErr, 'abs': upRelErr * upFlux3}
+    dnErr = {'rel': dnRelErr, 'abs': dnRelErr * dnFlux3}
+    self.fErrCompUp, self.fErrCompDn = upErr, dnErr
+  # end upDownComponents()
+
+  def plotCompErr(self):
+    """
+    plot error component -- i.e. flux differences for each of the 
+    separate up and down solutions
+    """
+
+    if self.band is None:
+      outRelErrPNG = 'opt_ang_up_down_rel_errors.png'
+      outRelErrPNG = 'opt_ang_up_down_abs_errors.png'
+    else:
+      outRelErrPNG = 'opt_ang_up_down_rel_errors_band%02d.png' % \
+        (self.band+1)
+      outAbsErrPNG = 'opt_ang_up_down_abs_errors_band%02d.png' % \
+        (self.band+1)
+    # endif bands
+
+    mSize = '0.5'
+    # now lets just try to do what we do in combineErr.fitAngT
+    # relative errors first
+    plot.plot(self.tComp, self.fErrCompUp['rel'], 'r.', \
+      markersize=mSize)
+    plot.plot(self.tComp, self.fErrCompDn['rel'], 'b.', alpha=0.5, \
+      markersize=mSize)
+
+    # horizontal zero line
+    plot.gca().axhline(0, linestyle='--', color='k')
+
+    plot.legend(['Up', 'Down'], numpoints=1, loc='best')
+    plot.xlabel('Transmittance')
+    plot.ylabel(r'$(F_{1-angle}-F_{3-angle})/F_{3-angle}$')
+    plot.savefig(outRelErrPNG)
+    plot.close()
+
+    # now absolute errors
+    plot.plot(self.tComp, self.fErrCompUp['abs'], 'r.', \
+      markersize=mSize)
+    plot.plot(self.tComp, self.fErrCompDn['abs'], 'b.', alpha=0.5, \
+      markersize=mSize)
+
+    # horizontal zero line
+    plot.gca().axhline(0, linestyle='--', color='k')
+
+    plot.legend(['Up', 'Down'], numpoints=1, loc='best')
+    plot.xlabel('Transmittance')
+    plot.ylabel(r'$(F_{1-angle}-F_{3-angle})$')
+    plot.savefig(outAbsErrPNG)
+    plot.close()
+  # end plotUpDownErr()
 
   def mergeUpDown(self):
     """
@@ -87,14 +179,6 @@ class combinedSolution:
     allRoots = np.append(self.upRoots, self.dnRoots)
     allWeights = np.append(self.upWeights, self.dnWeights)
 
-    # grab flux errors from new optimized angle calculations
-    # we want separate up and down errors
-    # no fitting is done with these
-    upOpt = upDat['optAng'].item()
-    self.xErrUp, self.yErrUp = upOpt.transmittance, upOpt.err
-    dnOpt = downDat['optAng'].item()
-    self.xErrDn, self.yErrDn = dnOpt.transmittance, dnOpt.err
-
     # sort by transmittance
     iSort = np.argsort(allTran)
     self.allTran, self.allRoots, self.allWeights = \
@@ -104,30 +188,8 @@ class combinedSolution:
     coeffs = np.polyfit(self.allTran, self.allRoots, self.rank, \
       w=self.allWeights)
     self.secTFit = np.poly1d(coeffs)
+    self.coeffs = coeffs
   # end mergeUpDown()
-
-  def plotCompErr(self):
-    """
-    plot error component -- i.e. flux differences for each of the 
-    separate up and down solutions
-    """
-
-    outErrPNG = 'opt_ang_up_down_errors.png' if self.band is None \
-      else 'opt_ang_up_down_errors_band%02d.png' % (self.band+1)
-
-    # now lets just try to do what we do in combineErr.fitAngT
-    plot.plot(self.xErrUp, self.yErrUp, 'ro')
-    plot.plot(self.xErrDn, self.yErrDn, 'bo', alpha=0.5)
-
-    # horizontal zero line
-    plot.gca().axhline(0, linestyle='--', color='k')
-
-    plot.legend(['Up', 'Down'], numpoints=1, loc='best')
-    plot.xlabel('Transmittance')
-    plot.ylabel(r'$(F_{1-angle}-F_{3-angle})/F_{3-angle}$')
-    plot.savefig(outErrPNG)
-    plot.close()
-  # end plotUpDownErr()
 
   def plotUpDown(self):
     """
@@ -139,7 +201,7 @@ class combinedSolution:
     plot.plot(self.upTran, self.upRoots, 'r.')
     plot.plot(self.dnTran, self.dnRoots, 'b.', alpha=0.5)
     plot.plot(self.allTran, self.secTFit(self.allTran), 'c--')
-    plot.legend(['Up', 'Down'], numpoints=1, loc='best')
+    plot.legend(['Up', 'Down', self.secTFit], numpoints=1, loc='best')
     plot.xlabel('Transmittance')
     plot.ylabel('secant(roots)')
     plot.savefig(self.outPNG)
@@ -157,7 +219,7 @@ class combinedSolution:
     # lw_solver_noscat code to look specifically for 
     # 'optimized_secants.nc'
     with nc.Dataset('optimized_secants.nc', 'w') as ncObj, \
-      nc.Dataset(self.refNC, 'r') as origObj:
+      nc.Dataset(self.refNC1, 'r') as origObj:
 
       od = np.array(origObj.variables['tau']).sum(axis=1)
 
@@ -176,14 +238,15 @@ class combinedSolution:
 
       origTran = np.exp(-od)
 
+      # need the model secants for g-point flux calculations
       ncObj.description = 'Secant values for every g-point of ' + \
         'every (Garand) profile to fluxErr class in ' + \
         'angle_optimize.py for which errors between a 1-angle ' + \
         'test RRTGMP run and a 3-angle reference RRTMGP run were ' + \
         'calcualated. These are the angles at which the errors ' + \
         'were minimized.'
-      ncObj.createDimension('profiles', self.nProf)
-      ncObj.createDimension('gpt', self.nGpt)
+      ncObj.createDimension('profiles', 42)
+      ncObj.createDimension('gpt', 256)
       secant = ncObj.createVariable(\
         'secant', float, ('gpt', 'profiles'))
       secant.units = 'None'
@@ -195,7 +258,7 @@ class combinedSolution:
 
     # stage input file expected by RRTMGP executable
     inNC = 'rrtmgp-inputs-outputs.nc'
-    if not os.path.exists(inNC): shutil.copyfile(self.refNC, inNC)
+    if not os.path.exists(inNC): shutil.copyfile(self.refNC1, inNC)
 
     # run the executable with optimized_secants.nc and refNC
     sub.call([self.exe])
@@ -218,10 +281,14 @@ if __name__ == '__main__':
   parser.add_argument('--down_npz', '-d', type=str, \
     default='save_files/secantRecalc_inputs_dn.npz', \
     help='Compressed NumPy file with down angle_optimize.py objects.')
-  parser.add_argument('--reference_nc', '-r', type=str, \
+  parser.add_argument('--reference_nc_1ang', '-r1', type=str, \
     default='rrtmgp-lw-inputs-outputs-clear.nc', \
-    help='RRTMGP by-g-point netCDF file that will be used as a ' + \
-    'template.')
+    help='1-angle RRTMGP by-g-point netCDF file that will be ' + \
+    'used as a template.')
+  parser.add_argument('--reference_nc_3ang', '-r3', type=str, \
+    default='rrtmgp-lw-inputs-outputs-clear-ang-3.nc', \
+    help='3-angle RRTMGP by-g-point netCDF file from which ' + \
+    'reference fluxes will be extracted.')
   parser.add_argument('--exe_rrtmgp', '-e', type=str, \
     default='lw_solver_opt_angs', \
     help='RRTMGP executable that calculates g-point fluxes for ' + \

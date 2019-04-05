@@ -8,7 +8,6 @@ import numpy as np
 # local library
 # have to do the * import so all necessary classes are imported
 from combine_up_down import *
-from bandmerge import *
 
 parser = argparse.ArgumentParser(\
   description='Call the up/down combine script for multiple ' + \
@@ -51,7 +50,8 @@ bands = range(1, 17)
 
 # some constants over all bands
 exe = 'lw_solver_opt_angs'
-refNC = 'rrtmgp-lw-inputs-outputs-clear.nc'
+refNC1 = 'rrtmgp-lw-inputs-outputs-clear.nc'
+refNC3 = 'rrtmgp-lw-inputs-outputs-clear-ang-3.nc'
 
 # stack solutions into an array that will eventually be 
 # (nGpt x nProfile), 256 x 42
@@ -70,7 +70,8 @@ for uFile, dFile, iBand in zip(upFiles, downFiles, bands):
   inDict = {}
   inDict['up_npz'] = uFile
   inDict['down_npz'] = dFile
-  inDict['reference_nc'] = refNC
+  inDict['reference_nc_1ang'] = refNC1
+  inDict['reference_nc_3ang'] = refNC3
   inDict['exe_rrtmgp'] = exe
   inDict['band'] = iBand
   inDict['out_png'] = '%s/%s' % (outDir, outPNG)
@@ -79,6 +80,7 @@ for uFile, dFile, iBand in zip(upFiles, downFiles, bands):
 
   # work with the combinedSolution object (from combine_up_down)
   cObj = combinedSolution(inDict)
+  cObj.upDownComponents()
   cObj.mergeUpDown()
   cObj.plotUpDown()
   cObj.plotCompErr()
@@ -96,13 +98,23 @@ for uFile, dFile, iBand in zip(upFiles, downFiles, bands):
     outVar.description = \
       'Band-optimized diffusivity secant(angle) for flux calculations'
     outVar[:] = np.array(secantOpt)
+
+    # coefficients of the fit, which for now is assumed to be no 
+    # greater than the default of rank 3
+    outObj.createDimension('coeffs', 2)
+    secFit = outObj.createVariable('secant_fit', float, \
+      ('band', 'coeffs'))
+    secFit.description = 'Coefficients of fit to secant vs. ' + \
+      'transmittance curve. Highest order is first.'
+    secFit[iBand-1, :] = cObj.coeffs
   # endwith
 # end band loop
 
 # simple bandmerge -- no new calculations, just combine flux arrays
 # start with copy of template, then replace flux, HR, and angle arrays
 #shutil.copyfile(templateNC, mergeNC)
-bandFluxUp, bandFluxDown, bandFluxNet, bandHR = [], [], [], []
+bandFluxUp, bandFluxDown, bandFluxNet, bandHR, bandSecFit = \
+  [], [], [], [], []
 
 heatFactor = 8.4391
 
@@ -115,12 +127,13 @@ for iBand, ncf in enumerate(allOutNC):
     pLay = np.array(ncObj.variables['p_lay'])/100.0
     bandLims= np.array(ncObj.variables['band_lims_wvn'])
     i1, i2 = np.array(ncObj.variables['band_lims_gpt'])[iBand] - 1
+    iArr = np.arange(i1, i2+1)
 
-    bandUpG = np.array(ncObj.variables['gpt_flux_up'])[i1:i2+1,:,:]
+    bandUpG = np.array(ncObj.variables['gpt_flux_up'])[iArr,:,:]
     bandUp = bandUpG.sum(axis=0)
     bandFluxUp.append(bandUp)
 
-    bandDownG = np.array(ncObj.variables['gpt_flux_dn'])[i1:i2+1,:,:]
+    bandDownG = np.array(ncObj.variables['gpt_flux_dn'])[iArr,:,:]
     bandDown = bandDownG.sum(axis=0)
     bandFluxDown.append(bandDown)
 
@@ -130,9 +143,12 @@ for iBand, ncf in enumerate(allOutNC):
     bandHR.append(np.diff(bandNet, axis=0)/np.diff(pLev, axis=0) / \
       86400 * heatFactor)
       
+    """
     ang = np.array(ncObj.variables['diff_angle_g'])[i1:i2+1,:]
     diffAng = np.array(ang) if iBand == 0 else \
       np.vstack( (diffAng, ang) )
+    """
+    bandSecFit.append(np.array(ncObj.variables['secant_fit'])[iBand, :])
   # end netCDF object
 # end netCDF loop
 
@@ -142,19 +158,21 @@ bandFluxUp = np.transpose(np.array(bandFluxUp), axes=outDims)
 bandFluxDown = np.transpose(np.array(bandFluxDown), axes=outDims)
 bandFluxNet = np.transpose(np.array(bandFluxNet), axes=outDims)
 bandHR = np.transpose(np.array(bandHR), axes=outDims)
+bandSecFit = np.array(bandSecFit)
 
 # now write the variables to bandmerged netCDF
 outVars = ['band_flux_up', 'band_flux_dn', 'band_flux_net', \
   'band_heating_rate', \
   'flux_up', 'flux_dn', 'flux_net', 'heating_rate', \
-  'p_lev', 'p_lay', 'band_lims_wvn']
+  'p_lev', 'p_lay', 'band_lims_wvn', 'secant_fit']
 outDat = [bandFluxUp, bandFluxDown, bandFluxNet, bandHR, \
   bandFluxUp.sum(axis=2), bandFluxDown.sum(axis=2), \
-  bandFluxNet.sum(axis=2), bandHR.sum(axis=2), pLev, pLay, bandLims]
+  bandFluxNet.sum(axis=2), bandHR.sum(axis=2), pLev, pLay, \
+  bandLims, bandSecFit]
 outDim = [('lev', 'col', 'band'), ('lev', 'col', 'band'), \
   ('lev', 'col', 'band'), ('lay', 'col', 'band'), \
   ('lev', 'col'), ('lev', 'col'), ('lev', 'col'), ('lay', 'col'), \
-  ('lev', 'col'), ('lay', 'col'), ('band', 'pair')]
+  ('lev', 'col'), ('lay', 'col'), ('band', 'pair'), ('band', 'pair')]
 
 with nc.Dataset(mergeNC, 'w') as ncObj:
   # flux vars
@@ -176,6 +194,7 @@ with nc.Dataset(mergeNC, 'w') as ncObj:
     ncVar[:] = outd
   # end out array loop
 
+  """
   # and diffusivity angle array to output file for all bands
   ncObj.createDimension('gpt', 256)
   outVar = ncObj.createVariable('diff_angle_g', float, ('gpt', 'col'))
@@ -183,6 +202,7 @@ with nc.Dataset(mergeNC, 'w') as ncObj:
   outVar.description = \
     'Band-optimized diffusivity secant(angle) for flux calculations'
   outVar[:] = np.array(secantOpt)
+  """
 # end nc write
 
 print('Wrote %s' % mergeNC)
