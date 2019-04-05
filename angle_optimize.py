@@ -91,16 +91,6 @@ class fluxErr():
     self.byBand = inDict['by_band']
     self.iBand = inDict['band_num']-1
 
-    # each g-point has a weight. this is in the literature but 
-    # was also provided by Eli in 
-    # https://rrtmgp2.slack.com/archives/D942AU7QE/p1550264049021200
-    # these will only be used if we're doing the by-band calculations
-    self.gWeights = np.array([0.1527534276, 0.1491729617, \
-      0.1420961469, 0.1316886544,  0.1181945205,  0.1019300893, \
-      0.0832767040, 0.0626720116, 0.0424925000,0.0046269894, \
-      0.0038279891, 0.0030260086, 0.0022199750, 0.0014140010, \
-      0.0005330000, 0.0000750000])
-
   # end constructor
 
   def refExtract(self):
@@ -128,14 +118,9 @@ class fluxErr():
         # slice the arrays (should be of dim nGpt x nProf)
         # doing a transpose for easier matrix multiplication with 
         # weights
-        fluxRef = self.fluxRef[self.bandInd1:self.bandInd2+1, :].T
-        transmittance = \
-          self.transmittance[self.bandInd1:self.bandInd2+1, :].T
-
-        # calculate the band averages for all profiles
-        # (basically a dot product with weights for each profile)
-        self.fluxRef = np.matmul(fluxRef, self.gWeights)
-        self.transmittance = np.matmul(transmittance, self.gWeights)
+        i1, i2 = self.bandInd1, self.bandInd2+1
+        self.fluxRef = self.fluxRef[i1:i2, :].flatten()
+        self.transmittance = self.transmittance[i1:i2, :].flatten()
       # endif bands
     # endwith
 
@@ -209,8 +194,7 @@ class fluxErr():
 
     if self.byBand:
       fluxTest = self.fluxTest[self.bandInd1:self.bandInd2+1, :]
-      fluxErr = (fluxTest-self.fluxRef).T
-      self.fluxErr = np.matmul(fluxErr, self.gWeights)
+      self.fluxErr = fluxTest.flatten()-self.fluxRef
     else:
       self.fluxErr = self.fluxTest-self.fluxRef
     # endif byBand
@@ -642,7 +626,7 @@ class combineErr():
     self.weights = np.array(newWeights)
   # end fitErrAng()
 
-  def fitAngT(self, rootsStr='rootsErrAng'):
+  def fitAngT(self, rootsStr='rootsErrAng', rank=3):
     """
     Using the roots determined in fitErrT, now generate a function of
     optimal angle dependent on transmission (i.e., roots)
@@ -656,6 +640,8 @@ class combineErr():
         should either be "rootsErrAng" (fit of error to angles for 
         every transmittance) or "rootsErrTran" (fit of error to 
         transmittance for every angle)
+
+      rank -- int, rank of the polynomial that is fit
     """
 
     tran = np.array(self.transmittance)
@@ -666,9 +652,9 @@ class combineErr():
       totWeight = self.weights.sum()
       if totWeight != 1: self.weights /= totWeight
 
-      coeffs = np.polyfit(tran, roots, 3, w=self.weights)
+      coeffs = np.polyfit(tran, roots, rank, w=self.weights)
     else:
-      coeffs = np.polyfit(tran, roots, 3)
+      coeffs = np.polyfit(tran, roots, rank)
     # endif weights
 
     self.secTFit = np.poly1d(coeffs)
@@ -1029,6 +1015,9 @@ if __name__ == '__main__':
   parser.add_argument('--band_num', '-bn', type=int, default=1, \
     help='If --by_band is specified, this is the (unit-offset) ' + \
     'band to process.')
+  parser.add_argument('--poly_rank', '-pr', type=int, default=3, \
+    help='Rank of polynomial that is fit to angle vs. ' + \
+    'transmittance data points.')
   args = parser.parse_args()
 
   angles, res = args.angle_range, args.angle_resolution
@@ -1070,14 +1059,8 @@ if __name__ == '__main__':
 
   if args.plot_fit:
     combObj.fitErrAng()
-    combObj.fitAngT()
+    combObj.fitAngT(rank=args.poly_rank)
     if args.prob_dist: combObj.plotDist()
-
-    np.savez(npzFile, fluxErr=fErrAll, combined=combObj, \
-      atts=vars(args))
-
-    if not args.suppress_stdout:
-      print('Saved objects to %s' % npzFile)
 
     # use the fit of angle vs. transmittance to model optimal angle 
     # for all g-points and profiles
@@ -1092,6 +1075,12 @@ if __name__ == '__main__':
       reSecObj.plotDist()
       reSecObj.plotDist(tBinning=True)
     # end histogram
+
+    np.savez(npzFile, fluxErr=fErrAll, combined=combObj, \
+      optAng=reSecObj, atts=vars(args))
+
+    if not args.suppress_stdout:
+      print('Saved objects to %s' % npzFile)
 
     # make new netCDF for use in Jupyter notebook
     newRefObj = BANDS.newRef(\
