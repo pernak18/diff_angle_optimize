@@ -98,7 +98,13 @@ class bandMerge:
 
       # the diffusivity angle is the same across all g-points for a 
       # given profile, so we'll just grab one per profile per band
-      diffAng.append(bandObj.diffAngle[0,:])
+      # this is no longer true, and the works that needs to be done 
+      # for diffAng is now in wrapper_combine_up_down.py. the code 
+      # written in such a way that the Band 16 array is complete
+      # with all optimized angles
+      #diffAng.append(bandObj.diffAngle[0,:])
+      diffAng = bandObj.diffAngle if iBand == self.nBands-1 else \
+        np.nan * np.zeros((256, 42))
     # end ncFile (band) loop
 
     # go from nBand x nLev x nProf dimensions to the standard RRTMGP
@@ -125,20 +131,24 @@ class bandMerge:
     bandObj.fieldReplace()
 
     # let's keep the optimized diffusivity angle, now by band instead
-    # of g-point
+    # of g-point. these are insane right now and i have not figured 
+    # out why
+    """
     with nc.Dataset(self.outNC, 'r+') as ncObj:
       # if the diffusivity angle already exists, we cannot overwrite 
       # it and everything is complete (but this should be the last 
       # thing we do in this method)
-      if 'diff_angle_band' in ncObj.variables.keys(): return
+      varName = 'diff_angle'
+      if varName in ncObj.variables.keys(): return
 
-      outVar = ncObj.createVariable(\
-        'diff_angle_band', float, ('col', 'band'))
+      ncObj.createDimension('gpt', 256)
+      outVar = ncObj.createVariable(varName, float, ('gpt', 'col'))
       outVar.units = 'Degrees'
       outVar.description = \
         'Optimized diffusivity angle for flux calculations'
-      outVar[:] = np.array(diffAng).T
+      outVar[:] = np.degrees(np.arccos(1/np.array(diffAng)))
     # endwith
+    """
   # end calcBands()
 
 # end bandMerge
