@@ -228,7 +228,7 @@ class e2e(WRAP.combineBandmerge):
       os.rename(tmpPDF, '%s/%s' % (self.outDir, tmpPDF))
     # end iBand loop
   # end plotProf()
-# end end
+# end e2e
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(\

@@ -1,7 +1,7 @@
 #
 # Meant to be called as a sub-make; relies on variables set in ../../Makefile
 #
-RRTMGP_ROOT = $(RRTMGP)/RRTMGP_Git_Master
+RRTMGP_ROOT = $(RRTMGP)/obsolete/RRTMGP_Git_Master
 RRTMGP_BUILD = $(RRTMGP_ROOT)/build
 SVN_ROOT = $(RRTMGP)/RRTMGP_SVN/trunk
 include $(RRTMGP_BUILD)/Makefile.rules $(RRTMGP_BUILD)/Makefile.conf $(SVN_ROOT)/test/Makefile.libs
