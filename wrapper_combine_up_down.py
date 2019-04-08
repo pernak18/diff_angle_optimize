@@ -107,6 +107,8 @@ class combineBandmerge:
     heating rates
     """
 
+    print('Merging band results')
+
     bandFluxUp, bandFluxDown, bandFluxNet, bandHR, bandSecFit = \
       [], [], [], [], []
 
