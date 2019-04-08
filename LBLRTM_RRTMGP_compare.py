@@ -16,13 +16,14 @@ import sys
 if sys.version_info[0] < 3:
   import ConfigParser
 else:
-  import configparser
+  import configparser as ConfigParser
 # endif python 3
 
 # for multi-page PDF files
 from matplotlib.backends.backend_pdf import PdfPages
 
 # from my utils.py library, should be in working dir
+sys.path.append('common')
 import utils
 
 # for RP local environment
@@ -245,8 +246,8 @@ def profPDFs(ref, test, deltaStr, outDir='.', \
   plotTitle = ['Upward Flux', 'Downward Flux', 'Heating Rate', \
     'Pressure (mbar)', 'Pressure (mbar)', 'Wavenumber Range']
   dum = plotVars[1]
-  refDict = getVars(refFile, attrList=plotVars)
-  testDict = getVars(testFile, attrList=plotVars)
+  refDict = getVars(ref, attrList=plotVars)
+  testDict = getVars(test, attrList=plotVars)
 
   # some quality control (consistency check)
   if refDict[dum].shape != testDict[dum].shape:
