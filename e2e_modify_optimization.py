@@ -32,6 +32,16 @@ class e2e(WRAP.combineBandmerge):
 
     # for heating rate calculations
     self.heatFactor = 8.4391
+
+    # each g-point has a weight. this is in the literature but 
+    # was also provided by Eli in 
+    # https://rrtmgp2.slack.com/archives/D942AU7QE/p1550264049021200
+    # these will only be used if we're doing the by-band calculations
+    self.gWeights = np.array([0.1527534276, 0.1491729617, \
+      0.1420961469, 0.1316886544,  0.1181945205,  0.1019300893, \
+      0.0832767040, 0.0626720116, 0.0424925000,0.0046269894, \
+      0.0038279891, 0.0030260086, 0.0022199750, 0.0014140010, \
+      0.0005330000, 0.0000750000])
   # end constructor
 
   def readConfig(self):
@@ -40,10 +50,16 @@ class e2e(WRAP.combineBandmerge):
     the COMPARE module
     """
 
+    # all of the valid affirmative entries for booleans in .ini file
+    yes = ['y', 'ye', 'yes', 't', 'tr', 'tru', 'true'] 
+
     print('Reading %s' % self.iniFile)
 
     cParse = ConfigParser.ConfigParser()
     cParse.read(self.iniFile)
+
+    self.bandAvg = cParse.get('Computation', 'band_average')
+
     self.refName = cParse.get('Plot Params', 'reference_model')
     self.refDesc = cParse.get('Plot Params', 'reference_description')
     self.testName = cParse.get('Plot Params', 'test_model')
@@ -104,9 +120,9 @@ class e2e(WRAP.combineBandmerge):
     # file is the same as the test netCDF file
     self.mergeNC = self.testFile
 
-    # standardize log plot and bands inputs
-    self.yLog = True if self.yLog.lower() in \
-      ['true', 'yes', 't', 'y', 'ye', 'tr', 'tru'] else False
+    # standardize band averaging, log plot and bands inputs
+    self.bandAvg = True if self.bandAvg in yes else False
+    self.yLog = True if self.yLog.lower() in yes else False
     self.bands = np.arange(self.nBands) if self.bands == '' else \
       np.array(self.bands.split()).astype(int)-1
 
@@ -183,6 +199,22 @@ class e2e(WRAP.combineBandmerge):
       # calculate whole-column transmittances to be used in fit
       with nc.Dataset(ncFile, 'r') as ncObj:
         od = np.array(ncObj.variables['tau']).sum(axis=1)
+
+        if self.bandAvg:
+          i1, i2 = np.array(ncObj.variables['band_lims_gpt'])[iBand]-1
+          iArr = np.arange(i1, i2+1)
+
+          # extract only the optical depths for this band use g-point
+          # weights to calculate band average
+          bandOD = od[iArr, :].T * self.gWeights
+          sumOD = bandOD.T.sum(axis=0)
+          sumOD = np.reshape(sumOD, (1, 42))
+
+          # populate the average ODs for this band to the rest of the 
+          # OD array
+          od = np.repeat(sumOD, 256, axis=0)
+        # end band averaging
+
         origTran = np.exp(-od)
       # endwith ncObj
 
@@ -212,7 +244,7 @@ class e2e(WRAP.combineBandmerge):
       os.rename(stageNC, ncFile)
       print('Wrote %s' % ncFile)
     # end ncFile loop
-  # end replaceFit()
+  # end reFit()
 
   def plotProf(self):
     """
