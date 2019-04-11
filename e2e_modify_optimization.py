@@ -13,8 +13,9 @@ import subprocess as sub
 import LBLRTM_RRTMGP_compare as COMPARE
 import wrapper_combine_up_down as WRAP
 
-# local module (utils.py in the common Git submodule did not work)
+# modules from Git common submodule
 import utils
+import RC_utils as RC
 
 class e2e(WRAP.combineBandmerge):
   def __init__(self, inFile):
@@ -29,6 +30,8 @@ class e2e(WRAP.combineBandmerge):
     utils.file_check(inFile)
     self.iniFile = inFile
     self.nBands = 16
+    self.nGpt = 256
+    self.nProf = 42
 
     # for heating rate calculations
     self.heatFactor = 8.4391
@@ -38,7 +41,7 @@ class e2e(WRAP.combineBandmerge):
     # https://rrtmgp2.slack.com/archives/D942AU7QE/p1550264049021200
     # these will only be used if we're doing the by-band calculations
     self.gWeights = np.array([0.1527534276, 0.1491729617, \
-      0.1420961469, 0.1316886544,  0.1181945205,  0.1019300893, \
+      0.1420961469, 0.1316886544, 0.1181945205, 0.1019300893, \
       0.0832767040, 0.0626720116, 0.0424925000,0.0046269894, \
       0.0038279891, 0.0030260086, 0.0022199750, 0.0014140010, \
       0.0005330000, 0.0000750000])
@@ -48,6 +51,8 @@ class e2e(WRAP.combineBandmerge):
     """
     Read in the configuration file parameters that will be used with 
     the COMPARE module
+
+    Kinda works like a second constructor
     """
 
     # all of the valid affirmative entries for booleans in .ini file
@@ -59,6 +64,7 @@ class e2e(WRAP.combineBandmerge):
     cParse.read(self.iniFile)
 
     self.bandAvg = cParse.get('Computation', 'band_average')
+    self.doPWV = cParse.get('Computation', 'pwv')
 
     self.refName = cParse.get('Plot Params', 'reference_model')
     self.refDesc = cParse.get('Plot Params', 'reference_description')
@@ -120,7 +126,8 @@ class e2e(WRAP.combineBandmerge):
     # file is the same as the test netCDF file
     self.mergeNC = self.testFile
 
-    # standardize band averaging, log plot and bands inputs
+    # standardize pwv work, band averaging, log plot and bands inputs
+    self.doPWV = True if self.doPWV in yes else False
     self.bandAvg = True if self.bandAvg in yes else False
     self.yLog = True if self.yLog.lower() in yes else False
     self.bands = np.arange(self.nBands) if self.bands == '' else \
@@ -128,6 +135,21 @@ class e2e(WRAP.combineBandmerge):
 
     self.xTitle = self.refName
     self.yTitle = '%s - %s' % (self.testName, self.refName)
+
+    # coefficients from RRTMG, which used PWV instead of transmittance
+    # in the equation a0(ibnd) + a1(ibnd)*exp(a2(ibnd)*pwvcm)
+    if self.doPWV:
+      a0 = [1.66, 1.55, 1.58, 1.66, 1.54, 1.454, 1.89, 1.33, \
+        1.668, 1.66, 1.66, 1.66, 1.66, 1.66, 1.66, 1.66]
+      a1 = [0.00, 0.25, 0.22, 0.00, 0.13, 0.446, -0.10, 0.40, \
+        -0.006, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
+      a2 = [0.00, -12.0, -11.7, 0.00, -0.72,-0.243, 0.19,-0.062, \
+        0.414, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
+      self.coeffs = np.array([a0, a1, a2]).T
+
+      # RRTMG hard codes the secant range to be between 1.5 and 1.8
+      self.secMM = np.array([1.5, 1.8])
+    # endif PWV
   # end readConfig()
 
   def getFilesNC(self):
@@ -184,7 +206,7 @@ class e2e(WRAP.combineBandmerge):
     print('Reading user coefficients from %s' % self.csvFile)
 
     dat = pd.read_csv(self.csvFile, header=None)
-    self.coeffs = np.array(dat)
+    if not self.doPWV: self.coeffs = np.array(dat)
   # end readCoeffs()
 
   def reFit(self):
@@ -208,12 +230,18 @@ class e2e(WRAP.combineBandmerge):
           # weights to calculate band average
           bandOD = od[iArr, :].T * self.gWeights
           sumOD = bandOD.T.sum(axis=0)
-          sumOD = np.reshape(sumOD, (1, 42))
+          sumOD = np.reshape(sumOD, (1, self.nProf))
 
           # populate the average ODs for this band to the rest of the 
           # OD array
-          od = np.repeat(sumOD, 256, axis=0)
+          od = np.repeat(sumOD, self.nGpt, axis=0)
         # end band averaging
+
+        if self.doPWV:
+          colDry = np.array(ncObj.variables['col_dry'])
+          vmrH2O = np.array(ncObj.variables['vmr_h2o'])
+          self.pwv = RC.colAmt2PWV(colDry*vmrH2O).sum(axis=0)
+        # endif PWV
 
         origTran = np.exp(-od)
       # endwith ncObj
@@ -222,12 +250,27 @@ class e2e(WRAP.combineBandmerge):
       # file for self.exe
       with nc.Dataset('optimized_secants.nc', 'r+') as ncObj:
         # we have to assign the secants for all bands because 
-        # self.exe expects a 256 x 42 array; eventually this is 
+        # self.exe expects a nGpt x nProf array; eventually this is 
         # reorganized by-band in bandmerge(). for now, we just treat
         # the optimized solution for one band (16 g-points) as the 
         # optimized solution for all points (256 g-points)
-        secantFit = np.poly1d(self.coeffs[iBand, :])
-        newSecants = secantFit(origTran)
+        if self.doPWV:
+          # RRTMG solution: a0(ibnd) + a1(ibnd)*exp(a2(ibnd)*pwvcm)
+          cBand = self.coeffs[iBand, :]
+          rrtmg = cBand[0] + cBand[1]*np.exp(cBand[2]*self.pwv)
+          rrtmg = np.reshape(rrtmg, (1, self.nProf))
+          newSecants = np.repeat(rrtmg, self.nGpt, axis=0)
+
+          # force secants to be between 1.5 and 1.8 like in RRTMG
+          iBelow = np.where(newSecants < self.secMM.min())
+          newSecants[iBelow] = self.secMM.min()
+          iAbove = np.where(newSecants > self.secMM.max())
+          newSecants[iAbove] = self.secMM.max()
+        else:
+          secantFit = np.poly1d(self.coeffs[iBand, :])
+          newSecants = secantFit(origTran)
+        # endif PWV
+
         ncVar = ncObj.variables['secant']
         ncVar[:] = newSecants
       # endwith ncObj
