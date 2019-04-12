@@ -319,6 +319,8 @@ class e2e(WRAP.combineBandmerge):
     COMPARE.statPDF(self.refFile, self.testFile, singlePDF=True, \
       xTitle=self.xTitle, yTitle=self.yTitle, forcing=self.forcing, \
       prefix=self.statPrefix, atmType=self.atmType)
+    tmpPDF = '%s_all_bands.pdf' % self.statPrefix
+    os.rename(tmpPDF, '%s/%s' % (self.outDir, tmpPDF))
   # end plotStat()
 # end e2e
 
