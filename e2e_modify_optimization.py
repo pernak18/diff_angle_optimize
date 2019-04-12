@@ -73,6 +73,8 @@ class e2e(WRAP.combineBandmerge):
     self.atmType = cParse.get('Plot Params', 'atmosphere')
     self.yLog = cParse.get('Plot Params', 'log')
     self.bands = cParse.get('Plot Params', 'bands')
+    self.doStats = cParse.get('Plot Params', 'stats_plots')
+    self.doProfs = cParse.get('Plot Params', 'prof_plots')
 
     self.refFile = cParse.get('Filename Params', 'reference_path')
     self.testFile = cParse.get('Filename Params', 'test_path')
@@ -126,10 +128,14 @@ class e2e(WRAP.combineBandmerge):
     # file is the same as the test netCDF file
     self.mergeNC = self.testFile
 
-    # standardize pwv work, band averaging, log plot and bands inputs
+    # standardize boolean inputs
     self.doPWV = True if self.doPWV in yes else False
     self.bandAvg = True if self.bandAvg in yes else False
     self.yLog = True if self.yLog.lower() in yes else False
+    self.doStats = True if self.doStats in yes else False
+    self.doProfs = True if self.doProfs in yes else False
+
+    # by default, plot all bands
     self.bands = np.arange(self.nBands) if self.bands == '' else \
       np.array(self.bands.split()).astype(int)-1
 
@@ -303,6 +309,17 @@ class e2e(WRAP.combineBandmerge):
       os.rename(tmpPDF, '%s/%s' % (self.outDir, tmpPDF))
     # end iBand loop
   # end plotProf()
+
+  def plotStat(self):
+    """
+    Plot test and reference flux and HR statistics (max diff, RMS 
+    diff, diff spread, troposphere/stratosphere)
+    """
+
+    COMPARE.statPDF(self.refFile, self.testFile, singlePDF=True, \
+      xTitle=self.xTitle, yTitle=self.yTitle, forcing=self.forcing, \
+      prefix=self.statPrefix, atmType=self.atmType)
+  # end plotStat()
 # end e2e
 
 if __name__ == '__main__':
@@ -321,6 +338,8 @@ if __name__ == '__main__':
   e2eObj.readCoeffs()
   e2eObj.reFit()
   e2eObj.bandmerge()
-  e2eObj.plotProf()
+
+  if e2eObj.doProfs: e2eObj.plotProf()
+  if e2eObj.doStats: e2eObj.plotStat()
 # end main()
 
