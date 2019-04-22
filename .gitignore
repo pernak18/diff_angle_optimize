@@ -13,4 +13,6 @@ obsolete
 band_calculations
 verify_bandmerge.py
 *.pdf
+CSV_files
+ini_files
 
