@@ -102,9 +102,9 @@ class newConfig:
     # config file fields to replace and their respective sections
     # in .ini file
     fieldReplace = ['log', 'prof_plots', 'stats_plots', \
-      'coefficients_file', 'output_dir']
+      'coefficients_file', 'output_dir', 'band_average']
     sections = ['Plot Params', 'Plot Params', 'Plot Params', \
-      'Filename Params', 'Filename Params']
+      'Filename Params', 'Filename Params', 'Computation']
 
     for pType, pDir in zip(self.plotTypes, self.plotDirs):
       for iConf, iniFile in enumerate(self.iniNames[pType]):
@@ -125,6 +125,9 @@ class newConfig:
             newVal = self.csvFiles[iConf]
           elif field == fieldReplace[4]:
             newVal = pDir
+          elif field == fieldReplace[5]:
+            # don't do band averagin
+            newVal = ''
           # endif field
           
           cParse.set(sections[iField], field, newVal)

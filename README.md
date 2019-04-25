@@ -114,6 +114,8 @@ The configuration file will almost always point to the `rrtmgp-inputs-outputs_op
 
 ## Modifying the Optimization <a name="modify">
 
+**NOTE**: since, in this section, we are *modifying* the optimization, the code assumes that the angle optimization code has already been run at least once. Namely, the netCDF files that were generated in [band optimization](#band) -- netCDFs for each band (e.g., `rrtmgp-inputs-outputs_opt_ang_band01.nc`), and the merged file (e.g., `rrtmgp-inputs-outputs_opt_ang_merged.nc`) must exist for the code in this section to proceed.
+
 End users may not be satisfied with the "complete" solution that was found in [band optimization](#band). For now, we are only fitting lines to the data points because higher-order polynomials were even worse. It is not a simple process of finding the appropriate curve to fit, especially when combining the up and down solutions, so some scripts were created that allow the user to examine a number of different linear coefficient pairs and their influence on the RRTMGP fluxes with respect to LBLRTM. This process utilizes a streamlined, multithreaded process that uses many of the modules in this repository.
 
 ```
@@ -136,13 +138,15 @@ If stats and profiles are wanted, or if y-log profiles are more appropriate, a d
 
 `-i` can take any number of `.ini` files as input and will make each PDF file in a separate CPU core.
 
-Another request: find the optimized angle extrema from the entire g-point analysis, then loop through a number of linear coefficients (same trials for each band) in 0.05 increments. This generates a "tapezoid" of linear coefficient pairs in coefficient space -- see `coeff_trial_error.py` (*for now, this only works with the default configuration*). A configuration file for each of these pairs (for each band, and all bands have the same coefficients) needs to be made, and this can be done with `make_config_files.py`, which automates the generation of all of the `.ini` files we'll need.
+Another request: find the optimized angle extrema from the entire g-point analysis, then loop through a number of linear coefficients (same trials for each band) in 0.05 increments. This generates a "trapezoid" of linear coefficient pairs in coefficient space -- see `coeff_trial_error.py` (*for now, this only works with the default configuration*). A configuration file for each of these pairs (for each band, and all bands have the same coefficients) needs to be made, and this can be done with `make_config_files.py`, which automates the generation of all of the `.ini` files we'll need.
 
 ```
 % make_config_files.py 
 ```
 
-That's a lot of plots -- 99 coefficient pairs and 16 bands. We can reorganize with:
+When this script is called, it not only makes the configuration files, but it re-runs everything that needs to be done for the optimization modification. It does this in parallel to save some time, but given the current setup (every iteration/coefficient pair uses the same test netCDF `rrtmgp-inputs-outputs_opt_ang_merged.nc`), only the log profile, linear profile, and stats plots for one coefficient pair can be processed at a time, so parallelization is over 3 cores. Presumably this can be altered if we generate a directory for each iteration of coefficient pairs, but this is hard-disk space-intensive and has not been tested.
+
+A lot of plots are generated -- 99 coefficient pairs and 16 bands. We can reorganize with:
 
 ```
 % reorg_profiles.py 
@@ -150,4 +154,6 @@ That's a lot of plots -- 99 coefficient pairs and 16 bands. We can reorganize wi
 % reorg_profiles.py -d profile_plots/mean_linear
 % reorg_profiles.py -d profile_plots/mean_log
 ```
+
+This organizes by coefficient pair, so there are 16 plots per subdirectory, assuming that the user made plots for all bands.
 
