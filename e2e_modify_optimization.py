@@ -18,7 +18,7 @@ import utils
 import RC_utils as RC
 
 class e2e(WRAP.combineBandmerge):
-  def __init__(self, inFile):
+  def __init__(self, inDict):
     """
     Not a whole lot happens in this constructor because we need to 
     extract information from the configuration file
@@ -27,11 +27,12 @@ class e2e(WRAP.combineBandmerge):
     the bandmerge() method
     """
 
-    utils.file_check(inFile)
-    self.iniFile = inFile
+    self.iniFile = inDict['config_file']
+    utils.file_check(self.iniFile)
     self.nBands = 16
     self.nGpt = 256
     self.nProf = 42
+    self.broadOnly = inDict['broadband_only']
 
     # for heating rate calculations
     self.heatFactor = 8.4391
@@ -301,13 +302,23 @@ class e2e(WRAP.combineBandmerge):
     test-ref differences
     """
 
-    for iBand in self.bands:
+    if self.broadOnly:
+      # broadband plotting
       COMPARE.profPDFs(self.refFile, self.testFile, self.yTitle, \
-        prefix=self.profPrefix, atmType=self.atmType, inBand=iBand, \
-        yLog=self.yLog)
-      tmpPDF = '%s_%02d.pdf' % (self.profPrefix, iBand+1)
+        prefix=self.profPrefix, atmType=self.atmType, \
+        inBand=None, yLog=self.yLog, broadOnly=True)
+      tmpPDF = '%s_broadband.pdf' % self.profPrefix
       os.rename(tmpPDF, '%s/%s' % (self.outDir, tmpPDF))
-    # end iBand loop
+    else:
+      # by-band plotting
+      for iBand in self.bands:
+        COMPARE.profPDFs(self.refFile, self.testFile, self.yTitle, \
+          prefix=self.profPrefix, atmType=self.atmType, \
+          inBand=iBand, yLog=self.yLog)
+        tmpPDF = '%s_%02d.pdf' % (self.profPrefix, iBand+1)
+        os.rename(tmpPDF, '%s/%s' % (self.outDir, tmpPDF))
+      # end iBand loop
+    # endif broadband
   # end plotProf()
 
   def plotStat(self):
@@ -332,9 +343,12 @@ if __name__ == '__main__':
     default='rrtmgp_lblrtm_config_garand_opt_ang.ini', \
     help='Configuration file that is used with ' + \
     'LBLRTM_RRTMGP_compare.py')
+  parser.add_argument('--broadband_only', '-b', action='store_true', \
+    help='Generate only the broadband plots. By default, only ' + \
+    'by-band plots are generated.')
   args = parser.parse_args()
 
-  e2eObj = e2e(args.config_file)
+  e2eObj = e2e(vars(args))
   e2eObj.readConfig()
   e2eObj.getFilesNC()
   e2eObj.readCoeffs()
