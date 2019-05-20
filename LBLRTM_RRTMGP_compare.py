@@ -89,10 +89,12 @@ def getVars(ncFile, attrList=defAttr, configDesc=None, flipNet=False):
       outDict[attr] = np.array(ncObj.variables[attr]) / 100.0
     elif 'heating_rate' in attr:
       # K/s to K/day conversion
-      outDict[attr] = np.array(ncObj.variables[attr]) * 86400
+      if os.path.basename(ncFile) is not 'rrtmg-lw-inputs-outputs.nc':
+        outDict[attr] = np.array(ncObj.variables[attr]) * 86400
     elif 'flux_net' in attr and 'lblrtm' in ncFile and flipNet:
       # flip the LBLRTM flux for Jen
-      outDict[attr] = np.array(ncObj.variables[attr]) * -1
+      if os.path.basename(ncFile) is not 'rrtmg-lw-inputs-outputs.nc':
+        outDict[attr] = np.array(ncObj.variables[attr]) * -1
     else:
       try:
         outDict[attr] = np.array(ncObj.variables[attr])
