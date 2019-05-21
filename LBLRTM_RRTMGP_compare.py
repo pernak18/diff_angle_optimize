@@ -79,7 +79,7 @@ def getVars(ncFile, attrList=defAttr, configDesc=None, flipNet=False):
   # dependent on attrList)
   outDict = {}
   # Handling LBLRTM net change outside of python now
-  flipNet=True
+  flipNet=False
   for attr in attrList:
     # for default, only "dimensions" will not be processed
     #if not ncObj.variables.has_key(attr): continue
@@ -89,8 +89,11 @@ def getVars(ncFile, attrList=defAttr, configDesc=None, flipNet=False):
       outDict[attr] = np.array(ncObj.variables[attr]) / 100.0
     elif 'heating_rate' in attr:
       # K/s to K/day conversion
-      if os.path.basename(ncFile) is not 'rrtmg-lw-inputs-outputs.nc':
+      if os.path.basename(ncFile) == 'rrtmg-lw-inputs-outputs.nc':
+        outDict[attr] = np.array(ncObj.variables[attr])
+      else:
         outDict[attr] = np.array(ncObj.variables[attr]) * 86400
+      # endif RRTMG
     elif 'flux_net' in attr and 'lblrtm' in ncFile and flipNet:
       # flip the LBLRTM flux for Jen
       if os.path.basename(ncFile) is not 'rrtmg-lw-inputs-outputs.nc':
