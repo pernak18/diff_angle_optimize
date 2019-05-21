@@ -351,9 +351,9 @@ if __name__ == '__main__':
   e2eObj = e2e(vars(args))
   e2eObj.readConfig()
   e2eObj.getFilesNC()
-  e2eObj.readCoeffs()
-  e2eObj.reFit()
-  e2eObj.bandmerge()
+  #e2eObj.readCoeffs()
+  #e2eObj.reFit()
+  #e2eObj.bandmerge()
 
   if e2eObj.doProfs: e2eObj.plotProf()
   if e2eObj.doStats: e2eObj.plotStat()
