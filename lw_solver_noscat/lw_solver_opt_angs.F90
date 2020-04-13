@@ -41,16 +41,19 @@ program lw_solver_opt_angs
   real(wp), dimension(:    ), allocatable :: t_sfc
   real(wp), dimension(:,:,:), allocatable, target :: flux_up, flux_dn
 
+  real(wp), dimension(:,  :), allocatable :: source_sfcJac
+  real(wp), dimension(:,:,:), allocatable :: radn_upJac
+
   logical :: top_at_1
   logical(wl) :: top_at_1L
   type(ty_fluxes_bygpoint) :: fluxes
 
   ! ----------------------------------------------------------------
   !
-  ! In early implementations this called the LW solver at an 
-  ! intermediate level in the call tree - after some error checking 
-  ! had been done but before deciding e.g. whether to use 
-  ! no-scattering or two-stream solvers. The current implementation 
+  ! In early implementations this called the LW solver at an
+  ! intermediate level in the call tree - after some error checking
+  ! had been done but before deciding e.g. whether to use
+  ! no-scattering or two-stream solvers. The current implementation
   ! is functionally the same as compute_fluxes_from_optics but
   ! writes out g-point fluxes
   !
@@ -69,20 +72,21 @@ program lw_solver_opt_angs
 
   allocate(flux_up(ncol,nlay+1,ngpt), flux_dn(ncol,nlay+1,ngpt))
   allocate(secant(ncol, ngpt))
-
+  allocate(source_sfcJac(ncol, ngpt), radn_upJac(ncol,nlay+1,ngpt))
+  source_sfcJac = 1.0_wp
   ! initialize down fluxes only?
   flux_dn(:,MERGE(1, nlay+1, top_at_1),:) = 0._wp
 
   ! propagation angle for this experiment (angle optimization)
-  ! was determined with angle_optimize.py and written as a function 
+  ! was determined with angle_optimize.py and written as a function
   ! of (Garand) profile and g-point
   if(nf90_open(secFile, NF90_NOWRITE, ncid) /= NF90_NOERR) &
     call stop_on_err("lw_solver_opt_angs: can't open file " // secFile)
   secant = read_field(ncid, 'secant', ncol, ngpt)
   ncid = nf90_close(ncid)
 
-  ! for lw_solver_noscat(), we need a surface emissivity array that 
-  ! is ncol x ngpt -- sfc_emis is nband x ncol. and from what i see, 
+  ! for lw_solver_noscat(), we need a surface emissivity array that
+  ! is ncol x ngpt -- sfc_emis is nband x ncol. and from what i see,
   ! the Garand profiles have sfc_emis of unity for all columns and
   ! bands
   allocate(sfc_emis_gpt(ncol, ngpt))
@@ -100,7 +104,8 @@ program lw_solver_opt_angs
   call lw_solver_noscat(ncol, nlay, ngpt, top_at_1L, &
     secant, 0.5_wp,  atmos_full%tau, sources_full%lay_source, &
     sources_full%lev_source_inc, sources_full%lev_source_dec, &
-    sfc_emis_gpt, sources_full%sfc_source, flux_up, flux_dn)
+    sfc_emis_gpt, sources_full%sfc_source, flux_up, flux_dn, &
+    source_sfcJac, radn_upJac)
 
   call write_gpt_fluxes(fileName, flux_up, flux_dn)
 end program lw_solver_opt_angs
