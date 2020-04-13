@@ -33,7 +33,7 @@ class newConfig:
 
   def coeffPairs(self):
     """
-    Extract coefficients from filenames of CSV files generated with 
+    Extract coefficients from filenames of CSV files generated with
     coeff_trial_error.py
     """
     csvFiles = sorted(glob.glob('%s/*.csv' % self.csvDir))
@@ -112,7 +112,7 @@ class newConfig:
         shutil.copyfile(self.iniTemp, iniFile)
 
         # edit fields in new ini file
-        cParse = configparser.ConfigParser() 
+        cParse = configparser.ConfigParser()
         cParse.read(iniFile)
         for iField, field in enumerate(fieldReplace):
           if field == fieldReplace[0]:
@@ -129,18 +129,18 @@ class newConfig:
             # don't do band averagin
             newVal = ''
           # endif field
-          
+
           cParse.set(sections[iField], field, newVal)
         # end field replacement loop
 
-        # we want unique names for each plot, and that's determined 
-        # by coefficients (which are in the .ini file), plot type 
-        # (which are in the output_dir name) and band (which is 
+        # we want unique names for each plot, and that's determined
+        # by coefficients (which are in the .ini file), plot type
+        # (which are in the output_dir name) and band (which is
         # appended by the plotting scripts)
-        # for the coefficients, we'll just use the basename of the 
+        # for the coefficients, we'll just use the basename of the
         # .ini file without the extension
         base = os.path.basename(iniFile)[:-4]
-        if 'log_profs' in iniFile: base += '_log' 
+        if 'log_profs' in iniFile: base += '_log'
         cParse.set('Filename Params', 'profiles_prefix', base)
         cParse.set('Filename Params', 'stats_prefix', base)
 
@@ -153,7 +153,7 @@ class newConfig:
 
   def pe2e(self):
     """
-    Pretty much just main() from parallel_e2e.py, with all of the 
+    Pretty much just main() from parallel_e2e.py, with all of the
     .ini files generated with this class
     """
 
@@ -163,7 +163,7 @@ class newConfig:
       iniFiles = [t1, t2, t3]
       iniFiles = [t1, t2]
 
-      # make e2e object (from e2e_modify_optimization module) for 
+      # make e2e object (from e2e_modify_optimization module) for
       # each .ini file
       e2eObjList = []
       for iniFile in iniFiles:
@@ -174,12 +174,13 @@ class newConfig:
 
         # only call constructor and "second constructor"
         # that determines attributes from config file
-        obj = e2e(iniFile)
+        e2eDict = {'config_file': iniFile, 'broadband_only': False}
+        obj = e2e(e2eDict)
         obj.readConfig()
         e2eObjList.append(obj)
       # end iniFile loop
 
-      # since computation is the same, we only need to run these 
+      # since computation is the same, we only need to run these
       # methods once
       obj.getFilesNC()
       obj.readCoeffs()
@@ -195,7 +196,7 @@ class newConfig:
       p.close()
     # end iniFile loop
   # end pe2e()
-  
+
 # end newConfig
 
 def e2ePool(inObj):
@@ -236,4 +237,3 @@ if __name__ == '__main__':
   newObj.iniWrite()
   newObj.pe2e()
 # end main()
-
