@@ -7,7 +7,7 @@ RRTMGP_ROOT = /project/p2130/git/rte-rrtmgp-add-alternate-angle-2
 RRTMGP_BUILD = $(RRTMGP_ROOT)/build
 TEST_ROOT = /project/p2130/git/rte-rrtmgp-test-val-add-alternate-angle-2
 
-include $(RRTMGP_BUILD)/Makefile.conf $(TEST_ROOT)/test/Makefile.libs ./Makefile.rules
+include $(RRTMGP_BUILD)/Makefile.conf $(TEST_ROOT)/test/Makefile.libs
 
 # Look for executables in these directores
 VPATH = ./:$(RRTMGP_BUILD):$(RRTMGP_ROOT)/examples/:$(RRTMGP_ROOT)/extensions/:$(TEST_ROOT)/test/util/src
