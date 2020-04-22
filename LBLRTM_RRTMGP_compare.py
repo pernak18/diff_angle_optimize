@@ -79,7 +79,7 @@ def getVars(ncFile, attrList=defAttr, configDesc=None, flipNet=False):
   # dependent on attrList)
   outDict = {}
   # Handling LBLRTM net change outside of python now
-  flipNet=False
+  flipNet=True
   for attr in attrList:
     # for default, only "dimensions" will not be processed
     #if not ncObj.variables.has_key(attr): continue
