@@ -161,7 +161,6 @@ class newConfig:
       self.iniNames[self.plotTypes[1]][1:], \
       self.iniNames[self.plotTypes[2]][1:]):
       iniFiles = [t1, t2, t3]
-      iniFiles = [t1, t2]
 
       # make e2e object (from e2e_modify_optimization module) for
       # each .ini file
