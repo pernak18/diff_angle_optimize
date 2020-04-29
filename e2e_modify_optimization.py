@@ -212,7 +212,7 @@ class e2e(WRAP.combineBandmerge):
 
     print('Reading user coefficients from %s' % self.csvFile)
 
-    dat = pd.read_csv(self.csvFile, header=None)
+    dat = pd.read_csv(self.csvFile, header=0)
     if not self.doPWV: self.coeffs = np.array(dat)
   # end readCoeffs()
 
